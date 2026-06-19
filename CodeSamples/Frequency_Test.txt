@@ -1,0 +1,49 @@
+from datetime import datetime, timedelta
+
+class FrequencyTracker:
+    """
+    A lightweight, in-memory state tracker to calculate alert frequency.
+    Maintains a sliding time window to identify noisy, spamming alerts.
+    """
+    def __init__(self, time_window_minutes=60, noise_threshold=20):
+        self.time_window = timedelta(minutes=time_window_minutes)
+        self.noise_threshold = noise_threshold
+        
+        # Dictionary to store timestamps. 
+        # Format: {"rule_id_source_ip": [datetime_obj1, datetime_obj2, ...]}
+        self._history = {}
+
+    def is_noisy(self, normalized_alert) -> bool:
+        """
+        Evaluates an alert to determine if it crosses the high-frequency noise threshold.
+        """
+        # 1. Create a unique identifier for the specific behavior
+        rule_id = normalized_alert.rule_id or "unknown_rule"
+        src_ip = normalized_alert.source_ip or "unknown_ip"
+        event_key = f"{rule_id}_{src_ip}"
+
+        # Get current time from the alert, or fallback to system time
+        try:
+            # Assuming Wazuh alerts format timestamps as ISO 8601
+            current_time = datetime.fromisoformat(normalized_alert.timestamp.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            current_time = datetime.now()
+
+        # Initialize the list if this is a new event type
+        if event_key not in self._history:
+            self._history[event_key] = []
+
+        # 2. Append the current alert's timestamp
+        self._history[event_key].append(current_time)
+
+        # 3. Purge timestamps older than the sliding window
+        cutoff_time = current_time - self.time_window
+        self._history[event_key] = [
+            t for t in self._history[event_key] if t > cutoff_time
+        ]
+
+        # 4. Check against the threshold
+        event_count = len(self._history[event_key])
+        
+        # If it has fired more than our threshold, it is considered noisy
+        return event_count > self.noise_threshold

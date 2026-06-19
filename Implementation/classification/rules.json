@@ -1,0 +1,18 @@
+{
+  "numeric_thresholds": {
+    "Critical Incident": 80,
+    "Requires Investigation": 40
+  },
+  "absolute_overrides": {
+    "threat_intel": ["malicious"],
+    "mitre_tactics": ["credential access"]
+  },
+  "false_positive_indicators": [
+    "5716",
+    "1002"
+  ],
+  "benign_indicators": [
+    "192.168.1.100",
+    "10.0.0.50"
+  ]
+}

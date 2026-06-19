@@ -1,0 +1,23 @@
+[
+  {
+    "indicator": "198.51.100.1",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 95,
+    "description": "Known Malicious Testing IP"
+  },
+  {
+    "indicator": "198.51.100.2",
+    "type": "ipv4",
+    "reputation": "suspicious",
+    "confidence_score": 60,
+    "description": "Suspicious Testing IP"
+  },
+  {
+    "indicator": "198.51.100.3",
+    "type": "ipv4",
+    "reputation": "known_benign",
+    "confidence_score": 100,
+    "description": "Whitelisted Benign Testing IP"
+  }
+]

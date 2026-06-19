@@ -1,0 +1,204 @@
+import sqlite3
+import json
+import os
+from typing import Dict, Any, List
+from datetime import datetime, timedelta
+
+from .alert_storage_repository import AlertStorageRepository
+
+class SqliteAlertStorage(AlertStorageRepository):
+    """
+    SQLite implementation of the Alert Storage layer.
+    Uses a hybrid relational-document schema.
+    """
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
+        
+        self._initialize_db()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        """Returns a new SQLite connection with WAL enabled."""
+        conn = sqlite3.connect(self.db_path)
+        # Enable Write-Ahead Logging for concurrent reads/writes
+        conn.execute("PRAGMA journal_mode=WAL;")
+        return conn
+
+    def _initialize_db(self):
+        """Creates the schema and necessary indexes if they do not exist."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Create Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS processed_alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT,
+                    rule_id TEXT,
+                    hostname TEXT,
+                    username TEXT,
+                    src_ip TEXT,
+                    dest_ip TEXT,
+                    process_name TEXT,
+                    file_hash TEXT,
+                    wazuh_level INTEGER,
+                    mitre_tactic TEXT,
+                    risk_score REAL,
+                    classification TEXT,
+                    full_alert_payload TEXT
+                )
+            ''')
+            
+            # Create Indexes
+            indexes = [
+                "timestamp",
+                "rule_id",
+                "hostname",
+                "username",
+                "src_ip",
+                "dest_ip",
+                "process_name",
+                "file_hash",
+                "wazuh_level",
+                "mitre_tactic"
+            ]
+            
+            for field in indexes:
+                index_name = f"idx_alerts_{field}"
+                cursor.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON processed_alerts({field})")
+                
+            conn.commit()
+
+    def _extract_fields(self, alert_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Extracts the indexed fields from the raw payload structure."""
+        alert = alert_payload.get("alert")
+        
+        # Determine how to extract from the alert (dict vs object)
+        is_dict = isinstance(alert, dict)
+        
+        def get_val(key, default=''):
+            if is_dict:
+                return alert.get(key, default)
+            return getattr(alert, key, default)
+
+        # Handle potential lists for hashes and tactics
+        file_hashes = get_val('file_hashes', [])
+        file_hash = file_hashes[0] if isinstance(file_hashes, list) and file_hashes else get_val('file_hash', '')
+        
+        # Timestamp: prefer event_time, fallback to normalized_timestamp or current time
+        timestamp_str = get_val('event_time') or get_val('normalized_timestamp') or datetime.utcnow().isoformat()
+        
+        # Make sure wazuh level handles missing or non-integer nicely
+        wazuh_level = get_val('rule_level', 0)
+        try:
+            wazuh_level = int(wazuh_level)
+        except (ValueError, TypeError):
+            wazuh_level = 0
+            
+        return {
+            "timestamp": timestamp_str,
+            "rule_id": str(get_val('rule_id', '')),
+            "hostname": get_val('hostname', ''),
+            "username": get_val('user_name', ''), # Notice 'user_name' in NormalizedAlert
+            "src_ip": get_val('src_ip', ''),
+            "dest_ip": get_val('dst_ip', ''),
+            "process_name": get_val('process_name', ''),
+            "file_hash": file_hash,
+            "wazuh_level": wazuh_level,
+            "mitre_tactic": get_val('mitre_tactic', ''),
+            "risk_score": float(alert_payload.get("risk_score", 0.0)),
+            "classification": alert_payload.get("classification", "")
+        }
+
+    def save_alert(self, alert_payload: Dict[str, Any]) -> None:
+        """Saves a fully processed alert to the SQLite database."""
+        fields = self._extract_fields(alert_payload)
+        
+        # Serialize the alert payload
+        # Some components might not be natively serializable, so we use default=str
+        payload_json = json.dumps(alert_payload, default=str)
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO processed_alerts (
+                    timestamp, rule_id, hostname, username, src_ip, dest_ip, 
+                    process_name, file_hash, wazuh_level, mitre_tactic, 
+                    risk_score, classification, full_alert_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                fields["timestamp"], fields["rule_id"], fields["hostname"], fields["username"],
+                fields["src_ip"], fields["dest_ip"], fields["process_name"], fields["file_hash"],
+                fields["wazuh_level"], fields["mitre_tactic"], fields["risk_score"], 
+                fields["classification"], payload_json
+            ))
+            conn.commit()
+
+    def get_alerts_for_grouping(self, hostname: str, rule_id: str, start_time: datetime, window_minutes: int) -> List[Dict[str, Any]]:
+        """Queries for alerts matching criteria within a time window."""
+        end_time = start_time + timedelta(minutes=window_minutes)
+        
+        start_iso = start_time.isoformat()
+        end_iso = end_time.isoformat()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT full_alert_payload FROM processed_alerts 
+                WHERE hostname = ? AND rule_id = ? 
+                AND timestamp >= ? AND timestamp <= ?
+            ''', (hostname, rule_id, start_iso, end_iso))
+            
+            rows = cursor.fetchall()
+            return [json.loads(row[0]) for row in rows]
+
+    def get_unprocessed_critical_alerts(self) -> List[Dict[str, Any]]:
+        """Retrieves alerts with classification 'Critical Incident'."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT full_alert_payload FROM processed_alerts 
+                WHERE classification = 'Critical Incident'
+                ORDER BY timestamp ASC
+            ''')
+            
+            rows = cursor.fetchall()
+            return [json.loads(row[0]) for row in rows]
+
+    def search_alerts(self, filters: Dict[str, Any], start_time: datetime = None, end_time: datetime = None) -> List[Dict[str, Any]]:
+        """Dynamically queries the database based on arbitrary filter criteria."""
+        query_parts = []
+        params = []
+        
+        for key, value in filters.items():
+            # Basic validation to ensure key is a valid column name to prevent SQL injection
+            # Though in this internal context it's less critical, it's good practice.
+            valid_columns = {
+                "timestamp", "rule_id", "hostname", "username", "src_ip", "dest_ip",
+                "process_name", "file_hash", "wazuh_level", "mitre_tactic", 
+                "risk_score", "classification"
+            }
+            if key in valid_columns:
+                query_parts.append(f"{key} = ?")
+                params.append(value)
+            
+        if start_time:
+            query_parts.append("timestamp >= ?")
+            params.append(start_time.isoformat())
+            
+        if end_time:
+            query_parts.append("timestamp <= ?")
+            params.append(end_time.isoformat())
+            
+        where_clause = " AND ".join(query_parts)
+        if where_clause:
+            query = f"SELECT full_alert_payload FROM processed_alerts WHERE {where_clause}"
+        else:
+            query = "SELECT full_alert_payload FROM processed_alerts"
+            
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [json.loads(row[0]) for row in rows]
