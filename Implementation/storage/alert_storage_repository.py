@@ -8,13 +8,37 @@ class AlertStorageRepository(ABC):
     """
     
     @abstractmethod
-    def save_alert(self, alert_payload: Dict[str, Any]) -> None:
+    def save_alert(self, alert_payload: Dict[str, Any]) -> int:
         """
         Takes the fully processed alert from Phase 9, extracts the indexed fields,
         serializes the full object to JSON, and commits it to the database.
         
         Args:
             alert_payload: The final dictionary payload output by the classification stage.
+            
+        Returns:
+            The generated unique ID of the saved alert.
+        """
+        pass
+
+    @abstractmethod
+    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str) -> None:
+        """
+        Creates a new investigation record.
+        """
+        pass
+
+    @abstractmethod
+    def update_investigation_status(self, investigation_id: str, status: str, closed_at: datetime) -> None:
+        """
+        Updates the status and closure time of an existing investigation.
+        """
+        pass
+
+    @abstractmethod
+    def add_alert_to_investigation(self, investigation_id: str, alert_id: int) -> None:
+        """
+        Links a processed alert to an active investigation.
         """
         pass
 

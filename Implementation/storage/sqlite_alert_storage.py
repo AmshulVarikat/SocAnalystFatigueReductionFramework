@@ -68,6 +68,31 @@ class SqliteAlertStorage(AlertStorageRepository):
                 index_name = f"idx_alerts_{field}"
                 cursor.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON processed_alerts({field})")
                 
+            # Create Investigations Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS investigations (
+                    investigation_id TEXT PRIMARY KEY,
+                    status TEXT,
+                    created_at TEXT,
+                    closed_at TEXT,
+                    rule_name TEXT
+                )
+            ''')
+            
+            # Create Investigation Mapping Table
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS investigation_mapping (
+                    mapping_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    investigation_id TEXT,
+                    alert_id INTEGER,
+                    FOREIGN KEY(investigation_id) REFERENCES investigations(investigation_id),
+                    FOREIGN KEY(alert_id) REFERENCES processed_alerts(id)
+                )
+            ''')
+            
+            # Index for mappings
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_mapping_inv_id ON investigation_mapping(investigation_id)")
+                
             conn.commit()
 
     def _extract_fields(self, alert_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,8 +136,8 @@ class SqliteAlertStorage(AlertStorageRepository):
             "classification": alert_payload.get("classification", "")
         }
 
-    def save_alert(self, alert_payload: Dict[str, Any]) -> None:
-        """Saves a fully processed alert to the SQLite database."""
+    def save_alert(self, alert_payload: Dict[str, Any]) -> int:
+        """Saves a fully processed alert to the SQLite database and returns the generated ID."""
         fields = self._extract_fields(alert_payload)
         
         # Serialize the alert payload
@@ -133,7 +158,9 @@ class SqliteAlertStorage(AlertStorageRepository):
                 fields["wazuh_level"], fields["mitre_tactic"], fields["risk_score"], 
                 fields["classification"], payload_json
             ))
+            inserted_id = cursor.lastrowid
             conn.commit()
+            return inserted_id
 
     def get_alerts_for_grouping(self, hostname: str, rule_id: str, start_time: datetime, window_minutes: int) -> List[Dict[str, Any]]:
         """Queries for alerts matching criteria within a time window."""
@@ -202,3 +229,34 @@ class SqliteAlertStorage(AlertStorageRepository):
             cursor.execute(query, params)
             rows = cursor.fetchall()
             return [json.loads(row[0]) for row in rows]
+
+    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str) -> None:
+        """Creates a new investigation record."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO investigations (investigation_id, status, created_at, rule_name)
+                VALUES (?, ?, ?, ?)
+            ''', (investigation_id, status, created_at.isoformat(), rule_name))
+            conn.commit()
+
+    def update_investigation_status(self, investigation_id: str, status: str, closed_at: datetime) -> None:
+        """Updates the status and closure time of an existing investigation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE investigations 
+                SET status = ?, closed_at = ?
+                WHERE investigation_id = ?
+            ''', (status, closed_at.isoformat(), investigation_id))
+            conn.commit()
+
+    def add_alert_to_investigation(self, investigation_id: str, alert_id: int) -> None:
+        """Links a processed alert to an active investigation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO investigation_mapping (investigation_id, alert_id)
+                VALUES (?, ?)
+            ''', (investigation_id, alert_id))
+            conn.commit()

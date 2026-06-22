@@ -49,6 +49,7 @@ By default, the script processes alerts from the `Implementation/inputs/Validati
 - `orchestrator.test_stage_3_enrichment()`
 - `orchestrator.test_stage_4_risk_score()`
 - `orchestrator.test_stage_5_classification()`
+- `orchestrator.test_stage_6_correlation()`
 
 ### Replay Engine 
 Simulates SOC alert queues by reading from JSON datasets and replaying them. Supports sequential, time-preserved, and accelerated replay modes. 
@@ -78,6 +79,9 @@ A rule-based engine that categorizes alerts into actionable buckets:
 
 ### 5. Alert Grouping & Storage 
 Reduces duplicate investigations by grouping related alerts (e.g., same host, same user, same rule) into a single context. Stores processed alerts into a high-performance SQLite database (`alerts.db`) using Write-Ahead Logging (WAL).
+
+### 6. Correlation Engine
+Analyzes the processed alert stream sequentially to group temporally and contextually related alerts into unified active investigations. Managed dynamically via rolling timeouts and customized JSON rule definitions.
 
 ## Customizing Classification Rules
 
@@ -114,6 +118,36 @@ The configuration file supports the following customization:
 1. **Numeric Thresholds**: Adjust the `risk_score` required to trigger a specific classification category. If an alert's score is >= 80, it becomes a "Critical Incident".
 2. **Absolute Overrides**: Define strings or lists of indicators that bypass the numeric threshold. For example, if `threat_intel` contains "malicious", it immediately classifies the alert accordingly.
 3. **False Positive / Benign Indicators**: Provide exact string matches (e.g., specific Rule IDs or IP Addresses). If an alert contains one of these indicators, it will be classified as a "Likely False Positive" or "Likely Benign" respectively, bypassing other logic.
+
+## Customizing Correlation Rules
+
+The correlation engine uses a separate JSON file to define how alerts should be grouped into investigations based on matching logic and temporal proximity.
+
+**File Location:** `Implementation/correlation/rules.json`
+
+### Correlation Rule Structure
+
+```json
+{
+  "rules": [
+    {
+      "rule_name": "Repeated Authentication Failures to Critical Asset",
+      "anchor": {
+        "rule_id": "5716",
+        "classification": "Requires Investigation"
+      },
+      "match_criteria": ["hostname", "username"],
+      "rolling_timeout_minutes": 30,
+      "historical_window_minutes": 60
+    }
+  ]
+}
+```
+
+#### How to Write Rules:
+1. **Anchor**: The exact attribute match criteria required for a completely new investigation to spawn.
+2. **Match Criteria**: The attributes (e.g. `hostname`, `username`) used to tie subsequent alerts to the same active investigation.
+3. **Rolling Timeout**: The time window (in minutes) to keep an investigation open and listening for new related events before closing it automatically.
 
 ## Outputs & Logging
 

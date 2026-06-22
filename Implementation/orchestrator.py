@@ -53,6 +53,9 @@ from Implementation.classification.classifier import AlertClassifier
 # Phase 10: Storage
 from Implementation.storage.sqlite_alert_storage import SqliteAlertStorage
 
+# Phase 11: Correlation
+from Implementation.correlation.correlation_engine import CorrelationEngine
+
 
 class Orchestrator:
     """
@@ -72,6 +75,12 @@ class Orchestrator:
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
         self.storage = SqliteAlertStorage("Implementation/storage/alerts.db")
+        self.correlator = CorrelationEngine(
+            db_repository=self.storage, 
+            tick_interval=10, 
+            rules_path="Implementation/correlation/rules.json",
+            on_investigation_event=self._handle_investigation_event
+        )
 
         # Setup Logging
         self.output_file = None
@@ -100,6 +109,11 @@ class Orchestrator:
             self.output_file.write(message + "\n")
         if print_to_terminal:
             print(message)
+
+    def _handle_investigation_event(self, event_data: dict):
+        """Callback for the Correlation Engine."""
+        self._log(f"\n[!] INVESTIGATION EVENT: {event_data.get('event')}", True)
+        self._log(self._pretty_format(event_data), True)
 
     def _pretty_format(self, obj) -> str:
         """Safely format dataclasses or dicts for logging."""
@@ -238,6 +252,35 @@ class Orchestrator:
 
         self._log(f"\n[*] Stage 5 Complete. Processed {idx + 1} alerts.", True)
 
+    def test_stage_6_correlation(self):
+        """Tests the full pipeline including the Correlation Engine."""
+        self._setup_stage_logging("stage_6_correlation")
+        self._log("=== RUNNING STAGE 6 TEST: CORRELATION ===", True)
+        stream = self._get_replay_stream()
+        
+        for idx, envelope in enumerate(stream):
+            terminal = idx < MAX_TERMINAL_OUTPUTS
+            if terminal:
+                self._log(f"\n--- Alert {idx + 1} ---", terminal)
+            
+            # Execute Pipeline Stages
+            normalized_alert = self.ingest_pipeline.process(envelope)
+            enriched_alert = self.enricher.enrich(normalized_alert)
+            scored_output = self.risk_scorer.score(enriched_alert)
+            final_output = self.classifier.process(scored_output)
+            
+            # Phase 10: Storage
+            storage_id = self.storage.save_alert(final_output)
+            final_output["_storage_id"] = storage_id
+            
+            if terminal:
+                self._log(f"[+] Alert Classified and Stored (ID: {storage_id})", terminal)
+                
+            # Phase 11: Correlation
+            self.correlator.process_alert(final_output)
+
+        self._log(f"\n[*] Stage 6 Complete. Processed {idx + 1} alerts.", True)
+
 if __name__ == "__main__":
     orchestrator = Orchestrator()
     
@@ -247,4 +290,5 @@ if __name__ == "__main__":
     # orchestrator.test_stage_2_ingest()
     # orchestrator.test_stage_3_enrichment()
     # orchestrator.test_stage_4_risk_score()
-    orchestrator.test_stage_5_classification()
+    # orchestrator.test_stage_5_classification()
+    orchestrator.test_stage_6_correlation()

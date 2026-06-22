@@ -1,0 +1,23 @@
+{
+  "rules": [
+    {
+      "rule_name": "Repeated Authentication Failures to Critical Asset",
+      "anchor": {
+        "rule_id": "5716",
+        "classification": "Requires Investigation"
+      },
+      "match_criteria": ["hostname", "username"],
+      "rolling_timeout_minutes": 30,
+      "historical_window_minutes": 60
+    },
+    {
+      "rule_name": "Multiple Critical Incidents on Single Host",
+      "anchor": {
+        "classification": "Critical Incident"
+      },
+      "match_criteria": ["hostname"],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    }
+  ]
+}
