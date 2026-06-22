@@ -7,12 +7,12 @@ from dataclasses import asdict
 # ==========================================
 # CONFIGURATION: Hardcoded Paths
 # ==========================================
-DATASET_ALERTS_PATH = "Validation-001"
-DATASET_GROUND_TRUTH_PATH = "Validation-001/GroundTruth/ground_truth.json"
+DATASET_ALERTS_PATH = "Implementation/inputs/Validation-001"
+DATASET_GROUND_TRUTH_PATH = "Implementation/inputs/Validation-001/GroundTruth/ground_truth.json"
 
 # Enrichment Databases
-ASSET_DB_PATH = "Validation-001/assets.json"
-THREAT_INTEL_DB_PATH = "Validation-001/threat_intel.json"
+ASSET_DB_PATH = "Implementation/inputs/Validation-001/assets.json"
+THREAT_INTEL_DB_PATH = "Implementation/inputs/Validation-001/threat_intel.json"
 
 # Output configuration
 MAX_TERMINAL_OUTPUTS = 3
@@ -71,7 +71,7 @@ class Orchestrator:
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
-        self.storage = SqliteAlertStorage("Validation-001/alerts.db")
+        self.storage = SqliteAlertStorage("Implementation/storage/alerts.db")
 
         # Setup Logging
         self.output_file = None

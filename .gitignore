@@ -1,6 +1,11 @@
 .venv/
 .DS_Store
 outputs/
+Implementation/inputs/
 __pycache__/
 *.pyc
 
+# SQLite Database files
+*.db
+*.db-shm
+*.db-wal

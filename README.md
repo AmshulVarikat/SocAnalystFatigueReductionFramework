@@ -43,7 +43,7 @@ The framework relies on a central controller called `orchestrator.py`. You can t
 python Implementation/orchestrator.py
 ```
 
-By default, the script processes alerts from the `Validation-001` dataset. To test different stages of the pipeline, open `Implementation/orchestrator.py` and uncomment the desired test method at the bottom of the file:
+By default, the script processes alerts from the `Implementation/inputs/Validation-001` dataset. To test different stages of the pipeline, open `Implementation/orchestrator.py` and uncomment the desired test method at the bottom of the file:
 - `orchestrator.test_stage_1_replay()`
 - `orchestrator.test_stage_2_ingest()`
 - `orchestrator.test_stage_3_enrichment()`
@@ -120,7 +120,7 @@ The configuration file supports the following customization:
 The pipeline generates multiple types of outputs for both real-time monitoring and post-analysis:
 - **Terminal Output**: Immediate insights into the first few alerts processed.
 - **Log Files**: Each pipeline stage generates its own detailed log file in the `outputs/<stage_name>/` directory (e.g., `outputs/stage_5_classification/`).
-- **SQLite Database**: All classified alerts are persistently stored in `Validation-001/alerts.db` for downstream investigation and visualization.
+- **SQLite Database**: All classified alerts are persistently stored in `alerts.db` for downstream investigation and visualization.
 
 ---
 *Developed as part of the Context-Aware Alert Prioritization Framework research initiative.*
