@@ -29,10 +29,10 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 ```
 
-Install the necessary dependencies (if a `requirements.txt` is available):
+Install the necessary dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements.txt # Will be added later
 ```
 
 ### 3. Implementation and Testing
@@ -40,10 +40,15 @@ pip install -r requirements.txt
 The framework relies on a central controller called `orchestrator.py`. You can test individual stages of the pipeline by running the orchestrator script.
 
 ```bash
-python Implementation/orchestrator.py
+python Implementation/orchestrator.py 
 ```
 
-By default, the script processes alerts from the `Implementation/inputs/Validation-001` dataset. To test different stages of the pipeline, open `Implementation/orchestrator.py` and uncomment the desired test method at the bottom of the file:
+If that fails set the root Path. 
+```bash
+PYTHONPATH=. python Implementation/orchestrator.py
+```
+
+To test different stages of the pipeline, open `Implementation/orchestrator.py` and uncomment the desired test method at the bottom of the file:
 - `orchestrator.test_stage_1_replay()`
 - `orchestrator.test_stage_2_ingest()`
 - `orchestrator.test_stage_3_enrichment()`
