@@ -75,9 +75,16 @@ class SqliteAlertStorage(AlertStorageRepository):
                     status TEXT,
                     created_at TEXT,
                     closed_at TEXT,
-                    rule_name TEXT
+                    rule_name TEXT,
+                    current_priority REAL
                 )
             ''')
+            
+            # Update schema for existing databases
+            cursor.execute("PRAGMA table_info(investigations)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'current_priority' not in columns:
+                cursor.execute("ALTER TABLE investigations ADD COLUMN current_priority REAL DEFAULT 0.0")
             
             # Create Investigation Mapping Table
             cursor.execute('''
@@ -230,14 +237,25 @@ class SqliteAlertStorage(AlertStorageRepository):
             rows = cursor.fetchall()
             return [json.loads(row[0]) for row in rows]
 
-    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str) -> None:
+    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str, current_priority: float = 0.0) -> None:
         """Creates a new investigation record."""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO investigations (investigation_id, status, created_at, rule_name)
-                VALUES (?, ?, ?, ?)
-            ''', (investigation_id, status, created_at.isoformat(), rule_name))
+                INSERT INTO investigations (investigation_id, status, created_at, rule_name, current_priority)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (investigation_id, status, created_at.isoformat(), rule_name, current_priority))
+            conn.commit()
+
+    def update_investigation_priority(self, investigation_id: str, current_priority: float) -> None:
+        """Updates the priority of an existing investigation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE investigations 
+                SET current_priority = ?
+                WHERE investigation_id = ?
+            ''', (current_priority, investigation_id))
             conn.commit()
 
     def update_investigation_status(self, investigation_id: str, status: str, closed_at: datetime) -> None:

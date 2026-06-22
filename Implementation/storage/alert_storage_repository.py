@@ -22,9 +22,16 @@ class AlertStorageRepository(ABC):
         pass
 
     @abstractmethod
-    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str) -> None:
+    def create_investigation(self, investigation_id: str, status: str, created_at: datetime, rule_name: str, current_priority: float = 0.0) -> None:
         """
         Creates a new investigation record.
+        """
+        pass
+
+    @abstractmethod
+    def update_investigation_priority(self, investigation_id: str, current_priority: float) -> None:
+        """
+        Updates the priority of an existing investigation.
         """
         pass
 

@@ -9,3 +9,9 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+
+
+CodeSamples/
+.agents/
+.pytest_cache
+Implementation_Details.txt

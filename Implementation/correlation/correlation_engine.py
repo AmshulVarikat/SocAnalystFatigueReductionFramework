@@ -15,6 +15,9 @@ class Investigation:
         self.last_alert_time: datetime = self._parse_time(anchor_alert)
         self.match_values: Dict[str, Any] = self._extract_match_values(anchor_alert, rule.get('match_criteria', []))
         self.status = "OPEN"
+        self.current_priority: float = 0.0
+        self.max_risk_score: float = anchor_alert.get("risk_score", 0.0)
+        self.total_alerts_count: int = 1
 
     def _get_field(self, obj, key, default=None):
         if isinstance(obj, dict):
@@ -119,17 +122,37 @@ class CorrelationEngine:
                 if alert_time <= inv.last_alert_time + timedelta(minutes=timeout_mins):
                     # Match
                     inv.alerts.append(alert_id)
+                    inv.total_alerts_count += 1
+                    alert_risk_score = alert.get("risk_score", 0.0)
+                    inv.max_risk_score = max(inv.max_risk_score, alert_risk_score)
+                    
                     inv.last_alert_time = max(inv.last_alert_time, alert_time)
                     self.db_repository.add_alert_to_investigation(inv_id, alert_id)
+                    
+                    self._recalculate_priority(inv_id)
+                    self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
+                    
                     matched = True
                     
                     if self.on_investigation_event:
                         self.on_investigation_event({
                             "event": "INVESTIGATION_UPDATED",
                             "investigation_id": inv_id,
-                            "alert_id": alert_id
+                            "alert_id": alert_id,
+                            "current_priority": inv.current_priority
                         })
         return matched
+
+    def _recalculate_priority(self, investigation_id: str):
+        inv = self.active_investigations.get(investigation_id)
+        if not inv:
+            return
+            
+        p_max = inv.max_risk_score
+        n = inv.total_alerts_count
+        
+        p_total = min(100.0, p_max + (n - 1) * 2.0)
+        inv.current_priority = p_total
 
     def _evaluate_new_triggers(self, alert: Dict[str, Any]):
         alert_data = self._get_field(alert, "alert", alert)
@@ -168,7 +191,15 @@ class CorrelationEngine:
         filters = inv.match_values
         historical_alerts = self.db_repository.search_alerts(filters, start_time=start_time, end_time=created_at)
         
+        inv.total_alerts_count = 1 + len(historical_alerts)
+        if historical_alerts:
+            hist_max_risk = max([a.get("risk_score", 0.0) for a in historical_alerts])
+            inv.max_risk_score = max(inv.max_risk_score, hist_max_risk)
+        
         self.active_investigations[inv_id] = inv
+        
+        self._recalculate_priority(inv_id)
+        self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
         
         if self.on_investigation_event:
             self.on_investigation_event({
@@ -176,7 +207,8 @@ class CorrelationEngine:
                 "investigation_id": inv_id,
                 "rule_name": rule.get("rule_name"),
                 "anchor_alert_id": alert_id,
-                "historical_alerts_count": len(historical_alerts)
+                "historical_alerts_count": len(historical_alerts),
+                "current_priority": inv.current_priority
             })
 
     def _tick(self):
