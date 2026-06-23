@@ -126,33 +126,40 @@ The configuration file supports the following customization:
 
 ## Customizing Correlation Rules
 
-The correlation engine uses a separate JSON file to define how alerts should be grouped into investigations based on matching logic and temporal proximity.
+The correlation engine uses a separate JSON file to define how alerts should be grouped into investigations based on matching logic, entity pivoting, kill chain progression, and temporal density. The engine is fully stateful and can dynamically track attacks as they expand across your network.
 
 **File Location:** `Implementation/correlation/rules.json`
 
 ### Correlation Rule Structure
 
+The correlation engine supports three distinct matching philosophies that can be combined or used independently:
+
 ```json
 {
   "rules": [
     {
-      "rule_name": "Repeated Authentication Failures to Critical Asset",
+      "rule_name": "Dynamic Lateral Movement & Infection Spread",
       "anchor": {
-        "rule_id": "5716",
         "classification": "Requires Investigation"
       },
-      "match_criteria": ["hostname", "username"],
-      "rolling_timeout_minutes": 30,
-      "historical_window_minutes": 60
+      "pivot_fields": ["src_ip", "hostname", "user_name", "file_hash"],
+      "track_progression": ["mitre_tactic"],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
     }
   ]
 }
 ```
 
-#### How to Write Rules:
-1. **Anchor**: The exact attribute match criteria required for a completely new investigation to spawn.
-2. **Match Criteria**: The attributes (e.g. `hostname`, `username`) used to tie subsequent alerts to the same active investigation.
-3. **Rolling Timeout**: The time window (in minutes) to keep an investigation open and listening for new related events before closing it automatically.
+#### Core Concepts & How to Write Rules:
+1. **Anchor**: The exact attribute match criteria required for a completely new investigation to spawn. When an alert matches the anchor, an investigation opens.
+2. **Entity Pivoting (`pivot_fields`)**: Enables true graph-based correlation. The engine dynamically learns new entities (IPs, users, hashes) as alerts are added. If an incoming alert shares *any* entity with the running investigation, it is grouped. This allows the engine to autonomously track lateral movement and outbreak spread.
+3. **Kill Chain Tracking (`track_progression`)**: Defines fields (like `mitre_tactic`) that indicate the attack is advancing. The engine statefully monitors these fields, and applies a massive priority multiplier when an attacker successfully moves through multiple unique phases of an attack lifecycle (e.g., Initial Access -> Execution -> Exfiltration).
+4. **Strict Linear Matching (`match_criteria`)**: A traditional approach where *all* defined criteria (e.g., `hostname` AND `user_name`) must identically match for an alert to be grouped.
+5. **Rolling Timeout**: The time window (in minutes) to keep an investigation open and listening for new related events before closing it automatically.
+
+### Temporal Density (Velocity Grouping)
+In addition to the JSON rules, the engine runs a global **Temporal Density Tracker**. If a single entity (like a `hostname` or `src_ip`) triggers an anomalous volume of alerts across disparate rules within a very short timeframe (e.g., 15 alerts in 60 seconds), the engine instantly skips the static rules and spawns a synthetic `"High-Density Anomalous Activity"` investigation with a forced critical priority. This catches "smash and grab" attacks and noisy brute-force attempts out of the box.
 
 ## Outputs & Logging
 
