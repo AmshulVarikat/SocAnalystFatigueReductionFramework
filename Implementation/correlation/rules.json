@@ -6,7 +6,10 @@
         "rule_id": "5716",
         "classification": "Requires Investigation"
       },
-      "match_criteria": ["hostname", "username"],
+      "match_criteria": [
+        "hostname",
+        "user_name"
+      ],
       "rolling_timeout_minutes": 30,
       "historical_window_minutes": 60
     },
@@ -15,7 +18,109 @@
       "anchor": {
         "classification": "Critical Incident"
       },
-      "match_criteria": ["hostname"],
+      "match_criteria": [
+        "hostname"
+      ],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Suspicious Activity from Single Source IP",
+      "anchor": {
+        "classification": "Requires Investigation"
+      },
+      "match_criteria": [
+        "src_ip"
+      ],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Host-Based MITRE Kill Chain Progression",
+      "anchor": {
+        "classification": "Requires Investigation"
+      },
+      "match_criteria": [
+        "hostname"
+      ],
+      "track_progression": [
+        "mitre_tactic"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Dynamic Lateral Movement & Infection Spread",
+      "anchor": {
+        "classification": "Requires Investigation"
+      },
+      "pivot_fields": [
+        "src_ip",
+        "hostname",
+        "user_name",
+        "file_hash"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Compromised User Account & Lateral Movement",
+      "anchor": {
+        "classification": "Requires Investigation"
+      },
+      "match_criteria": [
+        "user_name"
+      ],
+      "track_progression": [
+        "mitre_tactic",
+        "hostname"
+      ],
+      "rolling_timeout_minutes": 240,
+      "historical_window_minutes": 360
+    },
+    {
+      "rule_name": "Malware Outbreak Detection (Hash Pivoting)",
+      "anchor": {
+        "classification": "Critical Incident"
+      },
+      "pivot_fields": [
+        "file_hash",
+        "hostname",
+        "src_ip"
+      ],
+      "rolling_timeout_minutes": 180,
+      "historical_window_minutes": 180
+    },
+    {
+      "rule_name": "Data Exfiltration Pipeline Tracking",
+      "anchor": {
+        "mitre_tactic": "Exfiltration"
+      },
+      "pivot_fields": [
+        "src_ip",
+        "dest_ip",
+        "user_name"
+      ],
+      "track_progression": [
+        "mitre_technique_id"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 240
+    },
+    {
+      "rule_name": "Rapid Worm Propagation / Network Spreader",
+      "anchor": {
+        "mitre_tactic": "Lateral Movement",
+        "classification": "Critical Incident"
+      },
+      "pivot_fields": [
+        "src_ip",
+        "dest_ip",
+        "file_hash"
+      ],
+      "track_progression": [
+        "hostname"
+      ],
       "rolling_timeout_minutes": 60,
       "historical_window_minutes": 120
     }

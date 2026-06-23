@@ -4,8 +4,12 @@
     "Requires Investigation": 40
   },
   "absolute_overrides": {
-    "threat_intel": ["malicious"],
-    "mitre_tactics": ["credential access"]
+    "threat_intel": [
+      "malicious"
+    ],
+    "mitre_tactics": [
+      "credential access"
+    ]
   },
   "false_positive_indicators": [
     "5716",

@@ -214,8 +214,15 @@ class SqliteAlertStorage(AlertStorageRepository):
                 "risk_score", "classification"
             }
             if key in valid_columns:
-                query_parts.append(f"{key} = ?")
-                params.append(value)
+                if isinstance(value, (list, set, tuple)):
+                    if not value:
+                        continue
+                    placeholders = ','.join(['?'] * len(value))
+                    query_parts.append(f"{key} IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    query_parts.append(f"{key} = ?")
+                    params.append(value)
             
         if start_time:
             query_parts.append("timestamp >= ?")
