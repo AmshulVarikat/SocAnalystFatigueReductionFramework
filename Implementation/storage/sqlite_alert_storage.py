@@ -46,7 +46,8 @@ class SqliteAlertStorage(AlertStorageRepository):
                     mitre_tactic TEXT,
                     risk_score REAL,
                     classification TEXT,
-                    full_alert_payload TEXT
+                    full_alert_payload TEXT,
+                    enrichment_data TEXT
                 )
             ''')
             
@@ -67,6 +68,12 @@ class SqliteAlertStorage(AlertStorageRepository):
             for field in indexes:
                 index_name = f"idx_alerts_{field}"
                 cursor.execute(f"CREATE INDEX IF NOT EXISTS {index_name} ON processed_alerts({field})")
+                
+            # Update schema for existing databases (processed_alerts)
+            cursor.execute("PRAGMA table_info(processed_alerts)")
+            columns = [col[1] for col in cursor.fetchall()]
+            if 'enrichment_data' not in columns:
+                cursor.execute("ALTER TABLE processed_alerts ADD COLUMN enrichment_data TEXT DEFAULT '{}'")
                 
             # Create Investigations Table
             cursor.execute('''
@@ -151,19 +158,29 @@ class SqliteAlertStorage(AlertStorageRepository):
         # Some components might not be natively serializable, so we use default=str
         payload_json = json.dumps(alert_payload, default=str)
         
+        # Extract enrichment
+        alert_obj = alert_payload.get("alert", alert_payload)
+        enrichment_dict = {}
+        if isinstance(alert_obj, dict):
+            enrichment_dict = alert_obj.get("enrichment", {})
+        elif hasattr(alert_obj, "enrichment"):
+            enrichment_dict = getattr(alert_obj, "enrichment")
+        
+        enrichment_json = json.dumps(enrichment_dict, default=str)
+        
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO processed_alerts (
                     timestamp, rule_id, hostname, username, src_ip, dest_ip, 
                     process_name, file_hash, wazuh_level, mitre_tactic, 
-                    risk_score, classification, full_alert_payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    risk_score, classification, full_alert_payload, enrichment_data
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 fields["timestamp"], fields["rule_id"], fields["hostname"], fields["username"],
                 fields["src_ip"], fields["dest_ip"], fields["process_name"], fields["file_hash"],
                 fields["wazuh_level"], fields["mitre_tactic"], fields["risk_score"], 
-                fields["classification"], payload_json
+                fields["classification"], payload_json, enrichment_json
             ))
             inserted_id = cursor.lastrowid
             conn.commit()

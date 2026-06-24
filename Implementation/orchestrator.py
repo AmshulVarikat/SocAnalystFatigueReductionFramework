@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import asyncio
 from datetime import datetime
 from dataclasses import asdict
 
@@ -18,9 +19,6 @@ THREAT_INTEL_DB_PATH = "Implementation/inputs/Validation-001/threat_intel.json"
 MAX_TERMINAL_OUTPUTS = 3
 CLASSIFICATION_RULES_PATH = "Implementation/classification/rules.json"
 
-# ==========================================
-# IMPORTS (Assuming standard project structure)
-# ==========================================
 # Phase 6: Replay
 from ReplayEngine.loader import JsonLoader
 from ReplayEngine.engine import ReplayEngine
@@ -41,7 +39,8 @@ class Ingest:
 
 # Phase 7: Enrichment
 from Implementation.enrichment.asset_repository import JsonAssetRepository
-from Implementation.enrichment.threat_intel_repository import JsonThreatIntelRepository
+from Implementation.enrichment.threat_intel_repository import JsonThreatIntelRepository, CompositeThreatIntelRepository
+from Implementation.enrichment.alienvault_repository import AlienVaultRepository
 from Implementation.enrichment.alert_enricher import AlertEnricher
 
 # Phase 8: Risk Scoring
@@ -67,10 +66,21 @@ class Orchestrator:
         
         # 1. Initialize Enrichment Repositories
         self.asset_repo = JsonAssetRepository(ASSET_DB_PATH)
-        self.threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
+        json_threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
+        
+        # TODO: CHANGE THIS API KEY LATER
+        # Using a hardcoded placeholder as requested, with a clear visible comment.
+        otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
+        alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
+        
+        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo, alienvault_repo])
         
         # 2. Initialize Pipeline Modules
-        self.enricher = AlertEnricher(asset_repo=self.asset_repo, threat_intel_repo=self.threat_repo)
+        self.enricher = AlertEnricher(
+            asset_repo=self.asset_repo, 
+            local_threat_repo=json_threat_repo, 
+            otx_repo=alienvault_repo
+        )
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
@@ -281,6 +291,40 @@ class Orchestrator:
 
         self._log(f"\n[*] Stage 6 Complete. Processed {idx + 1} alerts.", True)
 
+    async def run_async_pipeline(self, batch_size=20):
+        self._setup_stage_logging("stage_6_async_correlation")
+        self._log("=== RUNNING ASYNC PIPELINE ===", True)
+        stream = self._get_replay_stream()
+        
+        batch = []
+        for idx, envelope in enumerate(stream):
+            batch.append(envelope)
+            
+            if len(batch) >= batch_size:
+                await self._process_batch(batch)
+                batch = []
+                
+        if batch:
+            await self._process_batch(batch)
+
+    async def _process_batch(self, batch):
+        # 1. Synchronous Ingest (Fast)
+        normalized_alerts = [self.ingest_pipeline.process(env) for env in batch]
+        
+        # 2. Asynchronous Enrichment (Concurrent Network I/O)
+        enrich_tasks = [self.enricher.aenrich(alert) for alert in normalized_alerts]
+        enriched_alerts = await asyncio.gather(*enrich_tasks)
+        
+        # 3. Synchronous Scoring & Correlation (Maintains chronological order)
+        for alert in enriched_alerts:
+            scored_output = self.risk_scorer.score(alert)
+            final_output = self.classifier.process(scored_output)
+            
+            storage_id = self.storage.save_alert(final_output)
+            final_output["_storage_id"] = storage_id
+            
+            self.correlator.process_alert(final_output)
+
 if __name__ == "__main__":
     orchestrator = Orchestrator()
     
@@ -291,4 +335,6 @@ if __name__ == "__main__":
     # orchestrator.test_stage_3_enrichment()
     # orchestrator.test_stage_4_risk_score()
     # orchestrator.test_stage_5_classification()
-    orchestrator.test_stage_6_correlation()
+    # orchestrator.test_stage_6_correlation()
+    
+    asyncio.run(orchestrator.run_async_pipeline(batch_size=20))

@@ -1,5 +1,6 @@
 # Implementation/enrichment/alert_enricher.py
-from typing import Any, Optional
+import asyncio
+from typing import Any, Optional, Dict
 from .asset_repository import AssetRepository
 from .threat_intel_repository import ThreatIntelRepository
 
@@ -8,14 +9,30 @@ class AlertEnricher:
     Phase 7: Alert Enrichment Module.
     Attaches Asset Context and Threat Intelligence to Normalized Alerts.
     """
-    def __init__(self, asset_repo: AssetRepository, threat_intel_repo: Optional[ThreatIntelRepository] = None):
+    def __init__(self, asset_repo: AssetRepository, local_threat_repo: Optional[ThreatIntelRepository] = None, otx_repo: Optional[ThreatIntelRepository] = None):
         self.asset_repo = asset_repo
-        self.threat_intel_repo = threat_intel_repo
+        self.local_threat_repo = local_threat_repo
+        self.otx_repo = otx_repo
+        # NEW: The Local Memory Cache
+        self._ioc_cache: Dict[str, dict] = {}
 
     def enrich(self, alert: Any) -> Any:
         """Enriches a single NormalizedAlert with context in-place."""
+        # Ensure enrichment dict exists
+        if not hasattr(alert, "enrichment"):
+            alert.enrichment = {}
+            
         self._enrich_asset_context(alert)
         self._enrich_threat_intel(alert)
+        return alert
+
+    async def aenrich(self, alert: Any) -> Any:
+        """Asynchronous version of enrich."""
+        if not hasattr(alert, "enrichment"):
+            alert.enrichment = {}
+            
+        self._enrich_asset_context(alert)
+        await self._aenrich_threat_intel(alert)
         return alert
 
     def _enrich_asset_context(self, alert: Any):
@@ -44,54 +61,103 @@ class AlertEnricher:
                 "is_unmanaged": True
             }
 
+    def _determine_type(self, ioc: str) -> Any:
+        try:
+            from OTXv2 import IndicatorTypes
+        except ImportError:
+            return None
+            
+        import re
+        
+        # Check if it's an IPv4
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ioc):
+            return IndicatorTypes.IPv4
+        
+        # Check if it's a Hash
+        if re.match(r"^[a-fA-F0-9]{32}$", ioc):
+            return IndicatorTypes.FILE_HASH_MD5
+        if re.match(r"^[a-fA-F0-9]{40}$", ioc):
+            return IndicatorTypes.FILE_HASH_SHA1
+        if re.match(r"^[a-fA-F0-9]{64}$", ioc):
+            return IndicatorTypes.FILE_HASH_SHA256
+            
+        # Check if it's a URL
+        if ioc.startswith("http://") or ioc.startswith("https://"):
+            return IndicatorTypes.URL
+            
+        # Fallback to domain
+        return IndicatorTypes.DOMAIN
+
     def _enrich_threat_intel(self, alert: Any):
         """
-        Scans alert observables against the Threat Intel repository.
-        Calculates the highest reputation/confidence watermark for the alert.
+        Original synchronous enrichment for backward compatibility
         """
-        # 1. Establish a safe baseline. Phase 8 will rely on these keys existing.
-        alert.threat_intel = {
-            "matched_indicators": [],
-            "highest_reputation": "unknown",
-            "max_confidence": 0
-        }
+        # (This is kept identical to original behavior before asyncio upgrade if needed,
+        # but could just point to a run_until_complete if we wanted, however the new code uses aenrich directly).
+        alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
+        
+    async def _aenrich_threat_intel(self, alert: Any):
+        alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
 
-        # 2. If no repo is provided, or it failed to load data, we just return the baseline
-        if not self.threat_intel_repo:
+        if not self.local_threat_repo and not self.otx_repo:
             return
 
-        # Collect all observables safely
         observables = set()
         if hasattr(alert, 'ips'): observables.update(alert.ips)
         if hasattr(alert, 'domains'): observables.update(alert.domains)
         if hasattr(alert, 'hashes'): observables.update(alert.hashes)
 
         matched_intel = []
-        highest_reputation = "unknown"
-        max_confidence = 0
+        missing_from_cache = []
 
-        # Simple weighting to determine the "worst" indicator in the alert
-        rep_weights = {"malicious": 3, "suspicious": 2, "unknown": 1, "known_benign": 0}
-
-        # 3. Check every observable against the database
+        # 1. Check Local Cache / Local DB first
         for obs in observables:
             if not obs: continue
             
-            intel = self.threat_intel_repo.lookup_ioc(obs)
-            if intel:
-                matched_intel.append(intel)
-                rep = intel.get("reputation", "unknown").lower()
-                conf = intel.get("confidence_score", 0)
+            if obs in self._ioc_cache:
+                matched_intel.append(self._ioc_cache[obs])
+            else:
+                # Try local DB
+                ioc_type = self._determine_type(obs)
+                intel = self.local_threat_repo.lookup_ioc(obs, ioc_type) if self.local_threat_repo else None
+                
+                if intel:
+                    self._ioc_cache[obs] = intel
+                    matched_intel.append(intel)
+                else:
+                    # Mark for external lookup
+                    missing_from_cache.append((obs, ioc_type))
 
-                # Determine if this is the highest threat seen so far in this alert
-                if rep_weights.get(rep, 1) > rep_weights.get(highest_reputation, 1):
-                    highest_reputation = rep
-                    max_confidence = conf
-                elif rep == highest_reputation and conf > max_confidence:
-                    max_confidence = conf
+        # 2. Asynchronously fetch all missing IOCs from OTX at the SAME TIME
+        if missing_from_cache and self.otx_repo:
+            tasks = [self.otx_repo.alookup_ioc(obs, ioc_type) for obs, ioc_type in missing_from_cache]
+            otx_results = await asyncio.gather(*tasks) # Pauses here until ALL requests finish
 
-        # 4. Attach findings to the alert
-        if matched_intel:
-            alert.threat_intel["matched_indicators"] = matched_intel
-            alert.threat_intel["highest_reputation"] = highest_reputation
-            alert.threat_intel["max_confidence"] = max_confidence
+            for (obs, ioc_type), otx_intel in zip(missing_from_cache, otx_results):
+                if otx_intel and "error" not in otx_intel:
+                    self._ioc_cache[obs] = otx_intel
+                    matched_intel.append(otx_intel)
+                    
+                    if hasattr(self.local_threat_repo, "add_ioc"):
+                        otx_intel["type"] = ioc_type
+                        self.local_threat_repo.add_ioc(otx_intel)
+
+        # 3. NOW calculate the scores (because we actually have the data!)
+        rep_weights = {"malicious": 3, "suspicious": 2, "unknown": 1, "known_benign": 0, "safe": 0}
+        highest_reputation = "unknown"
+        max_confidence = 0
+
+        for intel in matched_intel:
+            alert.enrichment[intel['indicator']] = intel
+            rep = intel.get("reputation", "unknown").lower()
+            conf = intel.get("confidence_score", 0)
+
+            if rep_weights.get(rep, 1) > rep_weights.get(highest_reputation, 1):
+                highest_reputation = rep
+                max_confidence = conf
+            elif rep == highest_reputation and conf > max_confidence:
+                max_confidence = conf
+
+        alert.threat_intel["matched_indicators"] = matched_intel
+        alert.threat_intel["highest_reputation"] = highest_reputation
+        alert.threat_intel["max_confidence"] = max_confidence

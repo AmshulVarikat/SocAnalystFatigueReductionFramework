@@ -79,6 +79,7 @@ class NormalizedAlert:
     email_addresses: List[str] = field(default_factory=list)
 
     # Enrichment / Context
+    enrichment: Dict[str, Any] = field(default_factory=dict)
     geolocation: Dict[str, Any] = field(default_factory=dict)
     geoip: Dict[str, Any] = field(default_factory=dict)
     whois: Dict[str, Any] = field(default_factory=dict)
