@@ -17,10 +17,17 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
 
 
 def _parse_alert_timestamp(value: str) -> datetime:
-    normalized = value.replace("Z", "+00:00")
-    if normalized.endswith("+0530"):
-        normalized = normalized[:-5] + "+05:30"
-    return datetime.fromisoformat(normalized)
+    try:
+        normalized = value.replace("Z", "+00:00")
+        if normalized.endswith("+0530"):
+            normalized = normalized[:-5] + "+05:30"
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        # Handle Kibana CSV exported format: "Oct 1, 2023 @ 00:49:18.889"
+        try:
+            return datetime.strptime(value, "%b %d, %Y @ %H:%M:%S.%f")
+        except ValueError:
+            return datetime.strptime(value, "%b %d, %Y @ %H:%M:%S")
 
 
 @dataclass(slots=True)
@@ -52,7 +59,11 @@ class JsonLoader:
 
         alerts: List[Alert] = []
         for index, item in enumerate(payload, start=1):
-            alerts.append(self._normalize_alert(item, index))
+            try:
+                alerts.append(self._normalize_alert(item, index))
+            except Exception:
+                # Skip corrupted alerts where timestamp or other fields are garbage
+                continue
         return alerts
 
     def _load_context(self, ground_truth_dir: Path) -> ValidationContext:

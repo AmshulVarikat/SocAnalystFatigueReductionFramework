@@ -202,10 +202,24 @@ class CorrelationEngine:
         if not entity_key:
             return False
             
-        alert_time_str = self._get_field(alert, "timestamp") or self._get_field(alert_data, "timestamp") or self._get_field(alert_data, "event_time") or self._get_field(alert_data, "normalized_timestamp")
-        try:
-            alert_time = datetime.fromisoformat(alert_time_str.replace("Z", "+00:00")).replace(tzinfo=None)
-        except (ValueError, TypeError):
+        ts_val = self._get_field(alert, "timestamp") or self._get_field(alert_data, "timestamp") or self._get_field(alert_data, "event_time") or self._get_field(alert_data, "normalized_timestamp")
+        
+        alert_time = None
+        if ts_val:
+            if isinstance(ts_val, datetime):
+                alert_time = ts_val.replace(tzinfo=None)
+            elif isinstance(ts_val, str):
+                try:
+                    alert_time = datetime.fromisoformat(ts_val.replace("Z", "+00:00")).replace(tzinfo=None)
+                except ValueError:
+                    try:
+                        alert_time = datetime.strptime(ts_val, "%b %d, %Y @ %H:%M:%S.%f").replace(tzinfo=None)
+                    except ValueError:
+                        try:
+                            alert_time = datetime.strptime(ts_val, "%b %d, %Y @ %H:%M:%S").replace(tzinfo=None)
+                        except ValueError:
+                            pass
+        if alert_time is None:
             alert_time = self.engine_clock
             
         if entity_key not in self.velocity_tracker:
@@ -213,7 +227,11 @@ class CorrelationEngine:
             
         self.velocity_tracker[entity_key].append(alert_time)
         
-        cutoff_time = self.engine_clock - timedelta(seconds=self.density_window_seconds)
+        if self.engine_clock == datetime.min:
+            cutoff_time = datetime.min
+        else:
+            cutoff_time = self.engine_clock - timedelta(seconds=self.density_window_seconds)
+            
         self.velocity_tracker[entity_key] = [t for t in self.velocity_tracker[entity_key] if t >= cutoff_time]
         
         if len(self.velocity_tracker[entity_key]) >= self.density_threshold:
@@ -228,14 +246,25 @@ class CorrelationEngine:
 
     def _update_clock(self, alert: Dict[str, Any]):
         alert_inner = self._get_field(alert, "alert", {})
-        ts_str = self._get_field(alert, "timestamp") or self._get_field(alert_inner, "timestamp") or self._get_field(alert_inner, "event_time") or self._get_field(alert_inner, "normalized_timestamp")
-        if ts_str:
-            try:
-                alert_time = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
-                if alert_time > self.engine_clock:
-                    self.engine_clock = alert_time
-            except ValueError:
-                pass
+        ts_val = self._get_field(alert, "timestamp") or self._get_field(alert_inner, "timestamp") or self._get_field(alert_inner, "event_time") or self._get_field(alert_inner, "normalized_timestamp")
+        if ts_val:
+            alert_time = None
+            if isinstance(ts_val, datetime):
+                alert_time = ts_val.replace(tzinfo=None)
+            elif isinstance(ts_val, str):
+                try:
+                    alert_time = datetime.fromisoformat(ts_val.replace("Z", "+00:00")).replace(tzinfo=None)
+                except ValueError:
+                    try:
+                        alert_time = datetime.strptime(ts_val, "%b %d, %Y @ %H:%M:%S.%f").replace(tzinfo=None)
+                    except ValueError:
+                        try:
+                            alert_time = datetime.strptime(ts_val, "%b %d, %Y @ %H:%M:%S").replace(tzinfo=None)
+                        except ValueError:
+                            pass
+            
+            if alert_time and alert_time > self.engine_clock:
+                self.engine_clock = alert_time
 
     def _evaluate_active_investigations(self, alert: Dict[str, Any]) -> bool:
         matched = False

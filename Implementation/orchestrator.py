@@ -8,8 +8,8 @@ from dataclasses import asdict
 # ==========================================
 # CONFIGURATION: Hardcoded Paths
 # ==========================================
-DATASET_ALERTS_PATH = "Implementation/inputs/Validation-001"
-DATASET_GROUND_TRUTH_PATH = "Implementation/inputs/Validation-001/GroundTruth/ground_truth.json"
+DATASET_ALERTS_PATH = "Implementation/inputs/Dataset1"
+DATASET_GROUND_TRUTH_PATH = "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json"
 
 # Enrichment Databases
 ASSET_DB_PATH = "Implementation/inputs/Validation-001/assets.json"
@@ -122,8 +122,8 @@ class Orchestrator:
 
     def _handle_investigation_event(self, event_data: dict):
         """Callback for the Correlation Engine."""
-        self._log(f"\n[!] INVESTIGATION EVENT: {event_data.get('event')}", True)
-        self._log(self._pretty_format(event_data), True)
+        self._log(f"\n[!] INVESTIGATION EVENT: {event_data.get('event')}", False)
+        self._log(self._pretty_format(event_data), False)
 
     def _pretty_format(self, obj) -> str:
         """Safely format dataclasses or dicts for logging."""
