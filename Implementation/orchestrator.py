@@ -14,12 +14,12 @@ from dataclasses import asdict
 import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1")
+DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset2")
 DATASET_GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json")
 
 # Enrichment Databases
 ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/assets.json")
-THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel.json")
+THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel_dataset2.json")
 
 # Output configuration
 MAX_TERMINAL_OUTPUTS = 3
@@ -112,16 +112,16 @@ class Orchestrator:
         
         # TODO: CHANGE THIS API KEY LATER
         # Using a hardcoded placeholder as requested, with a clear visible comment.
-        otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
-        alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
+        # otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
+        # alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
         
-        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo, alienvault_repo])
+        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo])
         
         # 2. Initialize Pipeline Modules
         self.enricher = AlertEnricher(
             asset_repo=self.asset_repo, 
             local_threat_repo=json_threat_repo, 
-            otx_repo=alienvault_repo
+            otx_repo=None
         )
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
