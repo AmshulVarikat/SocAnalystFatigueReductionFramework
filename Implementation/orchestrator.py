@@ -2,22 +2,28 @@ import os
 import sys
 import json
 import asyncio
+import threading
+import queue
+import httpx
 from datetime import datetime
 from dataclasses import asdict
 
 # ==========================================
 # CONFIGURATION: Hardcoded Paths
 # ==========================================
-DATASET_ALERTS_PATH = "Implementation/inputs/Dataset1"
-DATASET_GROUND_TRUTH_PATH = "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json"
+import os
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset2")
+DATASET_GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json")
 
 # Enrichment Databases
-ASSET_DB_PATH = "Implementation/inputs/Validation-001/assets.json"
-THREAT_INTEL_DB_PATH = "Implementation/inputs/Validation-001/threat_intel.json"
+ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/assets.json")
+THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel_dataset2.json")
 
 # Output configuration
 MAX_TERMINAL_OUTPUTS = 3
-CLASSIFICATION_RULES_PATH = "Implementation/classification/rules.json"
+CLASSIFICATION_RULES_PATH = os.path.join(PROJECT_ROOT, "Implementation/classification/rules.json")
 
 # Phase 6: Replay
 from ReplayEngine.loader import JsonLoader
@@ -56,13 +62,49 @@ from Implementation.storage.sqlite_alert_storage import SqliteAlertStorage
 from Implementation.correlation.correlation_engine import CorrelationEngine
 
 
+class DashboardPublisher:
+    """Asynchronously sends HTTP payloads to the FastAPI dashboard endpoint."""
+    def __init__(self, endpoint_url="http://localhost:8000/api/internal/event_ingest"):
+        self.endpoint_url = endpoint_url
+        self.queue = queue.Queue()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+
+    def _worker(self):
+        with httpx.Client() as client:
+            while True:
+                event = self.queue.get()
+                try:
+                    # We can wrap the event in a standard WebSocket payload format
+                    # e.g., if event is already an investigation dict, we format it.
+                    # Based on correlation engine, it usually sends something with 'event' and 'data'.
+                    payload = {
+                        "type": event.get("event", "INVESTIGATION_UPDATED"),
+                        "payload": event.get("data", event)
+                    }
+                    client.post(self.endpoint_url, json=payload)
+                except Exception as e:
+                    pass
+                finally:
+                    self.queue.task_done()
+
+    def publish(self, event_data: dict):
+        self.queue.put(event_data)
+
+
 class Orchestrator:
     """
     Central Controller for the SOC Alert Prioritization Framework.
     Wires together Replay, Ingest, Normalization, and Enrichment streams.
     """
-    def __init__(self):
+    def __init__(self, use_dashboard: bool = False):
         print(f"[*] Initializing Orchestrator Pipeline...")
+        self.use_dashboard = use_dashboard
+        if self.use_dashboard:
+            print("[*] Dashboard Publisher Enabled")
+            self.publisher = DashboardPublisher()
+        else:
+            self.publisher = None
         
         # 1. Initialize Enrichment Repositories
         self.asset_repo = JsonAssetRepository(ASSET_DB_PATH)
@@ -70,25 +112,25 @@ class Orchestrator:
         
         # TODO: CHANGE THIS API KEY LATER
         # Using a hardcoded placeholder as requested, with a clear visible comment.
-        otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
-        alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
+        # otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
+        # alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
         
-        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo, alienvault_repo])
+        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo])
         
         # 2. Initialize Pipeline Modules
         self.enricher = AlertEnricher(
             asset_repo=self.asset_repo, 
             local_threat_repo=json_threat_repo, 
-            otx_repo=alienvault_repo
+            otx_repo=None
         )
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
-        self.storage = SqliteAlertStorage("Implementation/storage/alerts.db")
+        self.storage = SqliteAlertStorage(os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db"))
         self.correlator = CorrelationEngine(
             db_repository=self.storage, 
             tick_interval=10, 
-            rules_path="Implementation/correlation/rules.json",
+            rules_path=os.path.join(PROJECT_ROOT, "Implementation/correlation/rules.json"),
             on_investigation_event=self._handle_investigation_event
         )
 
@@ -124,6 +166,10 @@ class Orchestrator:
         """Callback for the Correlation Engine."""
         self._log(f"\n[!] INVESTIGATION EVENT: {event_data.get('event')}", False)
         self._log(self._pretty_format(event_data), False)
+        if self.use_dashboard and self.publisher:
+            # We safely extract the relevant data and pass to publisher
+            safe_data = json.loads(self._pretty_format(event_data))
+            self.publisher.publish(safe_data)
 
     def _pretty_format(self, obj) -> str:
         """Safely format dataclasses or dicts for logging."""
@@ -326,7 +372,13 @@ class Orchestrator:
             self.correlator.process_alert(final_output)
 
 if __name__ == "__main__":
-    orchestrator = Orchestrator()
+    import argparse
+    parser = argparse.ArgumentParser(description="Run the SOC Orchestrator Pipeline")
+    parser.add_argument("--dashboard", action="store_true", help="Enable dashboard broadcasting")
+    parser.add_argument("--headless", action="store_true", help="Run without dashboard (default behavior)")
+    args = parser.parse_args()
+
+    orchestrator = Orchestrator(use_dashboard=args.dashboard)
     
     # Uncomment the stage you wish to test:
     

@@ -52,7 +52,11 @@ class JsonLoader:
 
     def _load_alerts(self, alerts_path: Path) -> List[Alert]:
         with alerts_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+            try:
+                payload = json.load(handle)
+            except json.JSONDecodeError:
+                handle.seek(0)
+                payload = [json.loads(line) for line in handle if line.strip()]
 
         if not isinstance(payload, list):
             raise ValueError("extracted_alerts.json must contain an array of alerts")
@@ -90,6 +94,8 @@ class JsonLoader:
         )
 
     def _load_json(self, path: Path) -> Any:
+        if not path.exists():
+            return {}
         with path.open("r", encoding="utf-8-sig") as handle:
             return json.load(handle)
 

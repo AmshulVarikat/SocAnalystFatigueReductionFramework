@@ -1,0 +1,14 @@
+@import "tailwindcss";
+
+@theme {
+  --color-severity-benign: theme('colors.slate.500');
+  --color-severity-fp: theme('colors.amber.600');
+  --color-severity-investigate: theme('colors.orange.500');
+  --color-severity-critical: theme('colors.red.600');
+}
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-slate-100;
+  }
+}

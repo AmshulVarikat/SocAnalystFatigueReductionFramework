@@ -194,6 +194,10 @@ class CorrelationEngine:
         self._tick()
 
     def _evaluate_temporal_density(self, alert: Dict[str, Any]) -> bool:
+        classification = alert.get("classification", "")
+        if classification in ["Likely Benign", "Likely False Positive"]:
+            return False
+
         alert_data = self._get_field(alert, "alert", alert)
         entity_key = self._get_field(alert_data, "hostname") or self._get_field(alert, "hostname")
         if not entity_key:
@@ -341,6 +345,10 @@ class CorrelationEngine:
         inv.current_priority = min(100.0, p_total)
 
     def _evaluate_new_triggers(self, alert: Dict[str, Any]):
+        classification = alert.get("classification", "")
+        if classification in ["Likely Benign", "Likely False Positive"]:
+            return
+
         alert_data = self._get_field(alert, "alert", alert)
         for rule in self.rules:
             anchor = rule.get("anchor", {})
