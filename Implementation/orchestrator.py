@@ -376,6 +376,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the SOC Orchestrator Pipeline")
     parser.add_argument("--dashboard", action="store_true", help="Enable dashboard broadcasting")
     parser.add_argument("--headless", action="store_true", help="Run without dashboard (default behavior)")
+    parser.add_argument("--live" )# implement live input from wazuh alerts.json in real time 
     args = parser.parse_args()
 
     orchestrator = Orchestrator(use_dashboard=args.dashboard)
