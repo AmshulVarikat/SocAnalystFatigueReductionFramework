@@ -26,14 +26,7 @@ class AlertEnricher:
         self._enrich_threat_intel(alert)
         return alert
 
-    async def aenrich(self, alert: Any) -> Any:
-        """Asynchronous version of enrich."""
-        if not hasattr(alert, "enrichment"):
-            alert.enrichment = {}
-            
-        self._enrich_asset_context(alert)
-        await self._aenrich_threat_intel(alert)
-        return alert
+
 
     def _enrich_asset_context(self, alert: Any):
         """Looks up the asset by hostname/agent_name and attaches context."""
@@ -89,17 +82,10 @@ class AlertEnricher:
         return IndicatorTypes.DOMAIN
 
     def _enrich_threat_intel(self, alert: Any):
-        """
-        Original synchronous enrichment for backward compatibility
-        """
-        # (This is kept identical to original behavior before asyncio upgrade if needed,
-        # but could just point to a run_until_complete if we wanted, however the new code uses aenrich directly).
+        """Enriches alert with threat intelligence from local database only."""
         alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
         
-    async def _aenrich_threat_intel(self, alert: Any):
-        alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
-
-        if not self.local_threat_repo and not self.otx_repo:
+        if not self.local_threat_repo:
             return
 
         observables = set()
@@ -108,41 +94,22 @@ class AlertEnricher:
         if hasattr(alert, 'hashes'): observables.update(alert.hashes)
 
         matched_intel = []
-        missing_from_cache = []
 
-        # 1. Check Local Cache / Local DB first
+        # 1. Check Local Cache / Local DB only
         for obs in observables:
             if not obs: continue
             
             if obs in self._ioc_cache:
                 matched_intel.append(self._ioc_cache[obs])
             else:
-                # Try local DB
                 ioc_type = self._determine_type(obs)
                 intel = self.local_threat_repo.lookup_ioc(obs, ioc_type) if self.local_threat_repo else None
                 
                 if intel:
                     self._ioc_cache[obs] = intel
                     matched_intel.append(intel)
-                else:
-                    # Mark for external lookup
-                    missing_from_cache.append((obs, ioc_type))
 
-        # 2. Asynchronously fetch all missing IOCs from OTX at the SAME TIME
-        if missing_from_cache and self.otx_repo:
-            tasks = [self.otx_repo.alookup_ioc(obs, ioc_type) for obs, ioc_type in missing_from_cache]
-            otx_results = await asyncio.gather(*tasks) # Pauses here until ALL requests finish
-
-            for (obs, ioc_type), otx_intel in zip(missing_from_cache, otx_results):
-                if otx_intel and "error" not in otx_intel:
-                    self._ioc_cache[obs] = otx_intel
-                    matched_intel.append(otx_intel)
-                    
-                    if hasattr(self.local_threat_repo, "add_ioc"):
-                        otx_intel["type"] = ioc_type
-                        self.local_threat_repo.add_ioc(otx_intel)
-
-        # 3. NOW calculate the scores (because we actually have the data!)
+        # 2. Calculate the scores
         rep_weights = {"malicious": 3, "suspicious": 2, "unknown": 1, "known_benign": 0, "safe": 0}
         highest_reputation = "unknown"
         max_confidence = 0

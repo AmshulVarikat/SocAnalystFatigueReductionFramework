@@ -5,141 +5,24 @@ from datetime import datetime, timedelta
 import networkx as nx
 
 class Investigation:
-    def __init__(self, investigation_id: str, rule: Dict[str, Any], anchor_alert: Dict[str, Any]):
+    def __init__(self, investigation_id: str, rules: List[Dict[str, Any]], anchor_alert: Dict[str, Any]):
         self.investigation_id = investigation_id
-        self.rule = rule
+        self.rules = rules
         self.alerts: List[int] = []
+        
         storage_id = anchor_alert.get('_storage_id')
         if storage_id is not None:
             self.alerts.append(storage_id)
             
         self.last_alert_time: datetime = self._parse_time(anchor_alert)
-        self.match_values: Dict[str, set] = self._extract_match_values(anchor_alert, rule)
+        self.match_values: Dict[str, set] = {}
         
-        # NEW: Track dynamic progression fields (e.g., evolving MITRE tactics)
         self.observed_progression: Dict[str, set] = {}
-        self._initialize_progression(anchor_alert)
-
         self.status = "OPEN"
         self.current_priority: float = 0.0
         self.max_risk_score: float = anchor_alert.get("risk_score", 0.0)
         self.total_alerts_count: int = 1
 
-    def _initialize_progression(self, alert: Dict[str, Any]):
-        progression_keys = self.rule.get('track_progression', [])
-        alert_data = self._get_field(alert, "alert", alert)
-        
-        for key in progression_keys:
-            self.observed_progression[key] = set()
-            val = self._get_field(alert_data, key) or self._get_field(alert, key)
-            if val:
-                # Handle both string values and lists (if an alert has multiple tactics)
-                if isinstance(val, list):
-                    self.observed_progression[key].update(val)
-                else:
-                    self.observed_progression[key].add(val)
-
-    def update_progression(self, alert: Dict[str, Any]):
-        progression_keys = self.rule.get('track_progression', [])
-        alert_data = self._get_field(alert, "alert", alert)
-        
-        for key in progression_keys:
-            val = self._get_field(alert_data, key) or self._get_field(alert, key)
-            if val:
-                if isinstance(val, list):
-                    self.observed_progression[key].update(val)
-                else:
-                    self.observed_progression[key].add(val)
-
-    def update_pivot_entities(self, alert: Dict[str, Any]):
-        pivot_fields = self.rule.get('pivot_fields', [])
-        alert_data = self._get_field(alert, "alert", alert)
-        
-        for field in pivot_fields:
-            val = self._get_field(alert_data, field)
-            if val is None:
-                val = self._get_field(alert, field)
-            if val is not None:
-                if field not in self.match_values:
-                    self.match_values[field] = set()
-                if isinstance(val, list):
-                    self.match_values[field].update(val)
-                else:
-                    self.match_values[field].add(val)
-
-    def _get_field(self, obj, key, default=None):
-        if isinstance(obj, dict):
-            return obj.get(key, default)
-        return getattr(obj, key, default)
-
-    def _parse_time(self, alert: Dict[str, Any]) -> datetime:
-        alert_inner = self._get_field(alert, "alert", {})
-        ts_str = self._get_field(alert, "timestamp") or self._get_field(alert_inner, "timestamp") or self._get_field(alert_inner, "event_time") or self._get_field(alert_inner, "normalized_timestamp") or datetime.utcnow().isoformat()
-        try:
-            return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
-        except ValueError:
-            return datetime.utcnow()
-
-    def _extract_match_values(self, alert: Dict[str, Any], rule: Dict[str, Any]) -> Dict[str, set]:
-        values = {}
-        fields = rule.get('match_criteria', []) + rule.get('pivot_fields', [])
-        alert_data = self._get_field(alert, "alert", alert)
-        for field in set(fields):
-            values[field] = set()
-            val = self._get_field(alert_data, field)
-            if val is None:
-                val = self._get_field(alert, field)
-            if val is not None:
-                if isinstance(val, list):
-                    values[field].update(val)
-                else:
-                    values[field].add(val)
-        return values
-        
-    def matches(self, alert: Dict[str, Any]) -> bool:
-        alert_data = self._get_field(alert, "alert", alert)
-        
-        pivot_fields = self.rule.get('pivot_fields', [])
-        if pivot_fields:
-            # Graph-based pivot logic
-            for field in pivot_fields:
-                val = self._get_field(alert_data, field)
-                if val is None:
-                    val = self._get_field(alert, field)
-                if val is not None:
-                    vals = set(val) if isinstance(val, list) else {val}
-                    if self.match_values.get(field, set()).intersection(vals):
-                        return True
-            return False # If there are pivot fields, we must intersect with at least one
-        
-        else:
-            # Linear logic
-            for criterion in self.rule.get('match_criteria', []):
-                expected_values = self.match_values.get(criterion, set())
-                val = self._get_field(alert_data, criterion)
-                if val is None:
-                    val = self._get_field(alert, criterion)
-                
-                vals = set(val) if isinstance(val, list) else {val} if val is not None else set()
-                if not expected_values.intersection(vals):
-                    return False
-                    
-            progression_keys = self.rule.get('track_progression', [])
-            if progression_keys:
-                has_progression_data = False
-                for key in progression_keys:
-                    if self._get_field(alert_data, key) or self._get_field(alert, key):
-                        has_progression_data = True
-                        break
-                if not has_progression_data:
-                    return False
-                    
-            return True
-
-
-class GraphInvestigation(Investigation):
-    def __init__(self, investigation_id: str, rule: Dict[str, Any], anchor_alert: Dict[str, Any]):
-        super().__init__(investigation_id, rule, anchor_alert)
         self.graph = nx.Graph()
         anchor_nodes = self._extract_graph_nodes(anchor_alert)
         self.anchor_nodes = set(anchor_nodes)
@@ -154,7 +37,28 @@ class GraphInvestigation(Investigation):
             ('user', 'ip'): 0.5,
             ('ip', 'user'): 0.5,
         }
+        
+        self.technique_history: List[tuple] = []
+        self.fired_rules = set()
+        self.next_expected = set()
+        self.rule_fire_times = {} 
+        
         self.update_graph(anchor_nodes)
+        self._add_technique(anchor_alert, self.last_alert_time)
+        self.evaluate_behavioral_rules(self.last_alert_time)
+
+    def _get_field(self, obj, key, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _parse_time(self, alert: Dict[str, Any]) -> datetime:
+        alert_inner = self._get_field(alert, "alert", {})
+        ts_str = self._get_field(alert, "timestamp") or self._get_field(alert_inner, "timestamp") or self._get_field(alert_inner, "event_time") or self._get_field(alert_inner, "normalized_timestamp") or datetime.utcnow().isoformat()
+        try:
+            return datetime.fromisoformat(ts_str.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return datetime.utcnow()
 
     def _extract_graph_nodes(self, alert: Dict[str, Any]) -> List[tuple]:
         alert_data = self._get_field(alert, "alert", alert)
@@ -190,8 +94,73 @@ class GraphInvestigation(Investigation):
                 weight = self.edge_weights.get((n1[0], n2[0]), 0.5)
                 self.graph.add_edge(n1, n2, weight=weight)
 
+    def _add_technique(self, alert: Dict[str, Any], alert_time: datetime):
+        alert_data = self._get_field(alert, "alert", alert)
+        techs = self._get_field(alert_data, "mitre_technique_id") or self._get_field(alert_data, "mitre_technique")
+        if techs:
+            if not isinstance(techs, list):
+                techs = [techs]
+            for t in techs:
+                self.technique_history.append((alert_time, t))
+                if 'mitre_technique' not in self.observed_progression:
+                    self.observed_progression['mitre_technique'] = set()
+                self.observed_progression['mitre_technique'].add(t)
+
+    def evaluate_behavioral_rules(self, current_time: datetime):
+        new_fires = True
+        while new_fires:
+            new_fires = False
+            for rule in self.rules:
+                rname = rule.get("rule_name")
+                if not rname or rname in self.fired_rules:
+                    continue
+                
+                window = rule.get("window_seconds", 3600)
+                cutoff = current_time - timedelta(seconds=window)
+                
+                conditions = rule.get("conditions", [])
+                if conditions:
+                    seen_techs = set()
+                    for t_time, tech in self.technique_history:
+                        if t_time >= cutoff and tech in conditions:
+                            seen_techs.add(tech)
+                    
+                    min_matches = rule.get("minimum_matches", 1)
+                    if len(seen_techs) >= min_matches:
+                        self.fired_rules.add(rname)
+                        self.rule_fire_times[rname] = current_time
+                        self.current_priority += rule.get("investigation_score", 10)
+                        self.current_priority = min(100.0, self.current_priority)
+                        if "next_expected" in rule:
+                            self.next_expected.update(rule["next_expected"])
+                        new_fires = True
+                
+                depends_on = rule.get("depends_on", [])
+                if depends_on:
+                    all_met = True
+                    for dep in depends_on:
+                        if dep not in self.fired_rules:
+                            all_met = False
+                            break
+                        if self.rule_fire_times[dep] < cutoff:
+                            all_met = False
+                            break
+                            
+                    if all_met:
+                        self.fired_rules.add(rname)
+                        self.rule_fire_times[rname] = current_time
+                        if rule.get("priority") == "Critical":
+                            self.current_priority = max(self.current_priority, 90.0)
+                        elif rule.get("priority") == "High":
+                            self.current_priority = max(self.current_priority, 70.0)
+                        
+                        self.current_priority += rule.get("investigation_score", 20)
+                        self.current_priority = min(100.0, self.current_priority)
+                        if "next_expected" in rule:
+                            self.next_expected.update(rule["next_expected"])
+                        new_fires = True
+
     def update_pivot_entities(self, alert: Dict[str, Any]):
-        super().update_pivot_entities(alert)
         self.update_graph(self._extract_graph_nodes(alert))
 
     def matches(self, alert: Dict[str, Any]) -> bool:
@@ -203,9 +172,8 @@ class GraphInvestigation(Investigation):
         if not existing_nodes:
             return False
             
-        constraints = self.rule.get('graph_constraints', {})
-        max_hops = constraints.get('max_hops', 2)
-        min_confidence = constraints.get('min_confidence', 0.3)
+        max_hops = 3
+        min_confidence = 0.2
         
         for inc_node in existing_nodes:
             for anchor in self.anchor_nodes:
@@ -221,14 +189,11 @@ class GraphInvestigation(Investigation):
                             return True
         return False
 
-
 class CorrelationEngine:
-    def __init__(self, db_repository, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None, correlation_mode: str = 'set_intersection'):
-        self.db_repository = db_repository
+    def __init__(self, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None):
         self.tick_interval = tick_interval
         self.rules_path = rules_path
         self.on_investigation_event = on_investigation_event
-        self.correlation_mode = correlation_mode
         
         self.active_investigations: Dict[str, Investigation] = {}
         self.alert_counter: int = 0
@@ -263,18 +228,8 @@ class CorrelationEngine:
             
         density_matched = self._evaluate_temporal_density(alert)
         if density_matched:
-            # Spawn a synthetic investigation
-            alert_data = self._get_field(alert, "alert", alert)
-            hostname = self._get_field(alert_data, "hostname") or self._get_field(alert, "hostname")
-            
-            synthetic_rule = {
-                "rule_name": "High-Density Anomalous Activity",
-                "match_criteria": ["hostname"] if hostname else ["src_ip"],
-                "rolling_timeout_minutes": 60,
-                "historical_window_minutes": 60
-            }
-            # force spawn with this rule
-            self._spawn_investigation(alert, synthetic_rule, forced_priority=85.0)
+            # Spawn a synthetic investigation (using rules=[] for it)
+            self._spawn_investigation(alert, rules=[], forced_priority=85.0)
         else:
             self._evaluate_new_triggers(alert)
             
@@ -372,7 +327,7 @@ class CorrelationEngine:
 
         for inv_id, inv in self.active_investigations.items():
             if inv.matches(alert):
-                timeout_mins = inv.rule.get("rolling_timeout_minutes", 30)
+                timeout_mins = 120
                 if alert_time <= inv.last_alert_time + timedelta(minutes=timeout_mins):
                     # Match
                     inv.alerts.append(alert_id)
@@ -382,21 +337,13 @@ class CorrelationEngine:
                     
                     inv.last_alert_time = max(inv.last_alert_time, alert_time)
                     
-                    # NEW: Update the progression state (add new MITRE tactics)
-                    inv.update_progression(alert)
-                    
-                    # NEW: Update pivot entities
                     inv.update_pivot_entities(alert)
-                    
-                    self.db_repository.add_alert_to_investigation(inv_id, alert_id)
-                    
-                    self._recalculate_priority(inv_id)
-                    self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
+                    inv._add_technique(alert, alert_time)
+                    inv.evaluate_behavioral_rules(alert_time)
                     
                     matched = True
                     
                     if self.on_investigation_event:
-                        # Convert sets to lists for JSON serialization in the event
                         serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
                         serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
                         event_payload = {
@@ -405,34 +352,13 @@ class CorrelationEngine:
                             "alert_id": alert_id,
                             "current_priority": inv.current_priority,
                             "match_criteria": serializable_match_values,
-                            "observed_progression": serializable_progression
+                            "observed_progression": serializable_progression,
+                            "graph": nx.node_link_data(inv.graph),
+                            "fired_rules": list(inv.fired_rules),
+                            "next_expected": list(inv.next_expected)
                         }
-                        if self.correlation_mode == 'graph_based':
-                            event_payload["graph"] = nx.node_link_data(inv.graph)
                         self.on_investigation_event(event_payload)
         return matched
-
-    def _recalculate_priority(self, investigation_id: str):
-        inv = self.active_investigations.get(investigation_id)
-        if not inv:
-            return
-            
-        p_max = inv.max_risk_score
-        n = inv.total_alerts_count
-        
-        # Calculate unique phases hit if tracking MITRE tactics
-        unique_phases = len(inv.observed_progression.get('mitre_tactic', set()))
-        
-        # Base calculation
-        p_total = p_max + (n - 1) * 2.0
-        
-        # NEW: Progression Multiplier 
-        # If an attacker has hit 3 different MITRE tactics (e.g., Access -> Execution -> Persistence)
-        # we add a massive priority boost (e.g., +15 points per unique phase beyond the first)
-        if unique_phases > 1:
-            p_total += (unique_phases - 1) * 15.0
-        
-        inv.current_priority = min(100.0, p_total)
 
     def _evaluate_new_triggers(self, alert: Dict[str, Any]):
         classification = alert.get("classification", "")
@@ -440,45 +366,36 @@ class CorrelationEngine:
             return
 
         alert_data = self._get_field(alert, "alert", alert)
-        for rule in self.rules:
-            anchor = rule.get("anchor", {})
-            match = True
-            for k, v in anchor.items():
-                val = self._get_field(alert_data, k)
-                if val is None:
-                    val = self._get_field(alert, k)
-                if str(val) != str(v):
-                    match = False
-                    break
+        
+        techs = self._get_field(alert_data, "mitre_technique_id") or self._get_field(alert_data, "mitre_technique")
+        if not techs:
+            return
+        if not isinstance(techs, list):
+            techs = [techs]
+        
+        trigger_techs = set()
+        for r in self.rules:
+            trigger_techs.update(r.get("conditions", []))
             
-            if match:
-                self._spawn_investigation(alert, rule)
+        for t in techs:
+            if t in trigger_techs:
+                self._spawn_investigation(alert, self.rules)
                 break
 
-    def _spawn_investigation(self, alert: Dict[str, Any], rule: Dict[str, Any], forced_priority: float = None):
+    def _spawn_investigation(self, alert: Dict[str, Any], rules: List[Dict[str, Any]], forced_priority: float = None):
         alert_id = self._get_field(alert, "_storage_id")
         if alert_id is None:
             return
             
         inv_id = str(uuid.uuid4())
         
-        if self.correlation_mode == 'graph_based':
-            inv = GraphInvestigation(inv_id, rule, alert)
-        else:
-            inv = Investigation(inv_id, rule, alert)
-        
+        inv = Investigation(inv_id, rules, alert)
         
         created_at = inv.last_alert_time
+        rule_name = "Behavioral Graph"
         
-        self.db_repository.create_investigation(inv_id, "OPEN", created_at, rule.get("rule_name", "Unknown"))
-        self.db_repository.add_alert_to_investigation(inv_id, alert_id)
-        
-        # Context extraction
-        hist_window = rule.get("historical_window_minutes", 60)
-        start_time = created_at - timedelta(minutes=hist_window)
-        
-        filters = inv.match_values
-        historical_alerts = self.db_repository.search_alerts(filters, start_time=start_time, end_time=created_at)
+        # Simulating historical alert lookup with an empty list for in-memory only mode
+        historical_alerts = []
         
         inv.total_alerts_count = 1 + len(historical_alerts)
         if historical_alerts:
@@ -486,28 +403,26 @@ class CorrelationEngine:
             inv.max_risk_score = max(inv.max_risk_score, hist_max_risk)
         
         self.active_investigations[inv_id] = inv
-        
-        self._recalculate_priority(inv_id)
+            
         if forced_priority is not None:
             inv.current_priority = forced_priority
             
-        self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
-        
         if self.on_investigation_event:
             serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
             serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
             event_payload = {
                 "event": "INVESTIGATION_OPENED",
                 "investigation_id": inv_id,
-                "rule_name": rule.get("rule_name"),
+                "rule_name": rule_name,
                 "anchor_alert_id": alert_id,
                 "historical_alerts_count": len(historical_alerts),
                 "current_priority": inv.current_priority,
                 "match_criteria": serializable_match_values,
-                "observed_progression": serializable_progression
+                "observed_progression": serializable_progression,
+                "graph": nx.node_link_data(inv.graph),
+                "fired_rules": list(inv.fired_rules),
+                "next_expected": list(inv.next_expected)
             }
-            if self.correlation_mode == 'graph_based':
-                event_payload["graph"] = nx.node_link_data(inv.graph)
             self.on_investigation_event(event_payload)
 
     def _tick(self):
@@ -519,23 +434,28 @@ class CorrelationEngine:
     def _evaluate_timeouts(self):
         to_close = []
         for inv_id, inv in self.active_investigations.items():
-            timeout_mins = inv.rule.get("rolling_timeout_minutes", 30)
+            timeout_mins = 120
+                
             if self.engine_clock > inv.last_alert_time + timedelta(minutes=timeout_mins):
                 to_close.append(inv_id)
                 
         for inv_id in to_close:
             inv = self.active_investigations.pop(inv_id)
-            inv.status = "CLOSED"
-            self.db_repository.update_investigation_status(inv_id, "CLOSED", self.engine_clock)
+            
+            # Determine new status based on priority
+            new_status = "AWAITING_REVIEW" if inv.current_priority > 50.0 else "CLOSED"
+            inv.status = new_status
             
             if self.on_investigation_event:
                 serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
                 event_payload = {
                     "event": "INVESTIGATION_CLOSED",
                     "investigation_id": inv_id,
+                    "new_status": new_status,
                     "closed_at": self.engine_clock.isoformat(),
-                    "match_criteria": serializable_match_values
+                    "match_criteria": serializable_match_values,
+                    "graph": nx.node_link_data(inv.graph),
+                    "fired_rules": list(inv.fired_rules),
+                    "next_expected": list(inv.next_expected)
                 }
-                if self.correlation_mode == 'graph_based':
-                    event_payload["graph"] = nx.node_link_data(inv.graph)
                 self.on_investigation_event(event_payload)

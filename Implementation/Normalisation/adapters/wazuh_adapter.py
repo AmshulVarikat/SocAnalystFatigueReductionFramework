@@ -111,9 +111,9 @@ def normalize_wazuh(raw_alert: Dict[str, Any]) -> NormalizedAlert:
     na.agent_id = _coerce_str(agent.get('id'))
     na.agent_name = _coerce_str(agent.get('name'))
     na.hostname = _first_present(
-        win_system.get('computer'),
-        agent.get('hostname'),
         agent.get('name'),
+        agent.get('hostname'),
+        win_system.get('computer'),
         raw_alert.get('hostname'),
         raw_alert.get('host'),
     )

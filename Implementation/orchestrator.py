@@ -4,7 +4,7 @@ import json
 import asyncio
 import threading
 import queue
-import httpx
+import uuid
 from datetime import datetime
 from dataclasses import asdict
 
@@ -14,11 +14,11 @@ from dataclasses import asdict
 import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset2")
+DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3")
 DATASET_GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json")
 
 # Enrichment Databases
-ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/assets.json")
+ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3/assets.json")
 THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel_dataset2.json")
 
 # Output configuration
@@ -53,43 +53,12 @@ from Implementation.enrichment.alert_enricher import AlertEnricher
 from Implementation.risk_score.scorer import AlertRiskScorer
 
 # Phase 9: Classification
-from Implementation.classification.classifier import AlertClassifier
-
-# Phase 10: Storage
-from Implementation.storage.sqlite_alert_storage import SqliteAlertStorage
+from Implementation_Core.classification.classifier import AlertClassifier
 
 # Phase 11: Correlation
-from Implementation.correlation.correlation_engine import CorrelationEngine
+from Implementation_Core.correlation.correlation_engine import CorrelationEngine
 
 
-class DashboardPublisher:
-    """Asynchronously sends HTTP payloads to the FastAPI dashboard endpoint."""
-    def __init__(self, endpoint_url="http://localhost:8000/api/internal/event_ingest"):
-        self.endpoint_url = endpoint_url
-        self.queue = queue.Queue()
-        self.thread = threading.Thread(target=self._worker, daemon=True)
-        self.thread.start()
-
-    def _worker(self):
-        with httpx.Client() as client:
-            while True:
-                event = self.queue.get()
-                try:
-                    # We can wrap the event in a standard WebSocket payload format
-                    # e.g., if event is already an investigation dict, we format it.
-                    # Based on correlation engine, it usually sends something with 'event' and 'data'.
-                    payload = {
-                        "type": event.get("event", "INVESTIGATION_UPDATED"),
-                        "payload": event.get("data", event)
-                    }
-                    client.post(self.endpoint_url, json=payload)
-                except Exception as e:
-                    pass
-                finally:
-                    self.queue.task_done()
-
-    def publish(self, event_data: dict):
-        self.queue.put(event_data)
 
 
 class Orchestrator:
@@ -97,15 +66,11 @@ class Orchestrator:
     Central Controller for the SOC Alert Prioritization Framework.
     Wires together Replay, Ingest, Normalization, and Enrichment streams.
     """
-    def __init__(self, use_dashboard: bool = False):
-        print(f"[*] Initializing Orchestrator Pipeline...")
-        self.use_dashboard = use_dashboard
-        if self.use_dashboard:
-            print("[*] Dashboard Publisher Enabled")
-            self.publisher = DashboardPublisher()
-        else:
-            self.publisher = None
-        
+    def __init__(self, speed: float = 0.0):
+        print(f"[*] Initializing Core Orchestrator Pipeline...")
+        self.speed = speed
+        self.publisher = None
+            
         # 1. Initialize Enrichment Repositories
         self.asset_repo = JsonAssetRepository(ASSET_DB_PATH)
         json_threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
@@ -126,9 +91,7 @@ class Orchestrator:
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
-        self.storage = SqliteAlertStorage(os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db"))
         self.correlator = CorrelationEngine(
-            db_repository=self.storage, 
             tick_interval=10, 
             rules_path=os.path.join(PROJECT_ROOT, "Implementation/correlation/rules.json"),
             on_investigation_event=self._handle_investigation_event
@@ -166,10 +129,6 @@ class Orchestrator:
         """Callback for the Correlation Engine."""
         self._log(f"\n[!] INVESTIGATION EVENT: {event_data.get('event')}", False)
         self._log(self._pretty_format(event_data), False)
-        if self.use_dashboard and self.publisher:
-            # We safely extract the relevant data and pass to publisher
-            safe_data = json.loads(self._pretty_format(event_data))
-            self.publisher.publish(safe_data)
 
     def _pretty_format(self, obj) -> str:
         """Safely format dataclasses or dicts for logging."""
@@ -187,7 +146,10 @@ class Orchestrator:
         """Helper to initialize and return the replay generator."""
         loader = JsonLoader(DATASET_ALERTS_PATH) # May require passing ground truth path depending on your loader spec
         dataset = loader.load()
-        engine = ReplayEngine(dataset, mode=ReplayMode.SEQUENTIAL)
+        if self.speed > 0:
+            engine = ReplayEngine(dataset, mode=ReplayMode.ACCELERATED, acceleration_factor=self.speed)
+        else:
+            engine = ReplayEngine(dataset, mode=ReplayMode.SEQUENTIAL)
         # Yielding in standard sequential mode for stream processing
         return engine.replay()
 
@@ -294,10 +256,10 @@ class Orchestrator:
             scored_output = self.risk_scorer.score(enriched_alert)
             final_output = self.classifier.process(scored_output)
             
-            # Phase 10: Storage
-            self.storage.save_alert(final_output)
+            # Phase 10: Storage (REMOVED in Core)
+            # Final output is handled directly
             
-            self._log(f"[+] Alert Classified and Stored", terminal)
+            self._log(f"[+] Alert Classified", terminal)
             self._log(self._pretty_format(final_output), terminal)
             
             if terminal:
@@ -325,61 +287,54 @@ class Orchestrator:
             scored_output = self.risk_scorer.score(enriched_alert)
             final_output = self.classifier.process(scored_output)
             
-            # Phase 10: Storage
-            storage_id = self.storage.save_alert(final_output)
+            # Phase 10: Storage (REMOVED in Core)
+            # We generate an in-memory ID instead of persisting to DB
+            storage_id = str(uuid.uuid4())
             final_output["_storage_id"] = storage_id
             
             if terminal:
-                self._log(f"[+] Alert Classified and Stored (ID: {storage_id})", terminal)
+                self._log(f"[+] Alert Classified (ID: {storage_id})", terminal)
                 
             # Phase 11: Correlation
             self.correlator.process_alert(final_output)
 
         self._log(f"\n[*] Stage 6 Complete. Processed {idx + 1} alerts.", True)
 
-    async def run_async_pipeline(self, batch_size=20):
-        self._setup_stage_logging("stage_6_async_correlation")
-        self._log("=== RUNNING ASYNC PIPELINE ===", True)
+    def run_pipeline(self):
+        """Runs the full pipeline synchronously."""
+        self._setup_stage_logging("stage_6_sync_correlation")
+        self._log("=== RUNNING SYNC PIPELINE ===", True)
         stream = self._get_replay_stream()
         
-        batch = []
         for idx, envelope in enumerate(stream):
-            batch.append(envelope)
+            terminal = True # log everything
+            self._log(f"\n--- Alert {idx + 1} ---", terminal)
             
-            if len(batch) >= batch_size:
-                await self._process_batch(batch)
-                batch = []
-                
-        if batch:
-            await self._process_batch(batch)
-
-    async def _process_batch(self, batch):
-        # 1. Synchronous Ingest (Fast)
-        normalized_alerts = [self.ingest_pipeline.process(env) for env in batch]
-        
-        # 2. Asynchronous Enrichment (Concurrent Network I/O)
-        enrich_tasks = [self.enricher.aenrich(alert) for alert in normalized_alerts]
-        enriched_alerts = await asyncio.gather(*enrich_tasks)
-        
-        # 3. Synchronous Scoring & Correlation (Maintains chronological order)
-        for alert in enriched_alerts:
-            scored_output = self.risk_scorer.score(alert)
+            # Execute Pipeline Stages
+            normalized_alert = self.ingest_pipeline.process(envelope)
+            enriched_alert = self.enricher.enrich(normalized_alert)
+            scored_output = self.risk_scorer.score(enriched_alert)
             final_output = self.classifier.process(scored_output)
             
-            storage_id = self.storage.save_alert(final_output)
+            # Phase 10: Storage (REMOVED in Core)
+            storage_id = str(uuid.uuid4())
             final_output["_storage_id"] = storage_id
             
+            self._log(f"[+] Alert Classified (ID: {storage_id})", terminal)
+                
+            # Phase 11: Correlation
             self.correlator.process_alert(final_output)
+
+        self._log(f"\n[*] Pipeline Complete. Processed {idx + 1} alerts.", True)
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run the SOC Orchestrator Pipeline")
-    parser.add_argument("--dashboard", action="store_true", help="Enable dashboard broadcasting")
-    parser.add_argument("--headless", action="store_true", help="Run without dashboard (default behavior)")
-    parser.add_argument("--live" )# implement live input from wazuh alerts.json in real time 
+    parser.add_argument("--live", action="store_true", help="Implement live input from wazuh alerts.json in real time")
+    parser.add_argument("--speed", type=float, default=0.0, help="Acceleration factor for replay (e.g., 60 for 60x speed). Default 0 runs instantly.")
     args = parser.parse_args()
 
-    orchestrator = Orchestrator(use_dashboard=args.dashboard)
+    orchestrator = Orchestrator(speed=args.speed)
     
     # Uncomment the stage you wish to test:
     
@@ -390,4 +345,4 @@ if __name__ == "__main__":
     # orchestrator.test_stage_5_classification()
     # orchestrator.test_stage_6_correlation()
     
-    asyncio.run(orchestrator.run_async_pipeline(batch_size=20))
+    orchestrator.run_pipeline()

@@ -1,140 +1,123 @@
 {
   "rules": [
     {
-      "rule_name": "Repeated Authentication Failures to Critical Asset",
-      "anchor": {
-        "rule_id": "5716",
-        "classification": "Requires Investigation"
-      },
-      "match_criteria": [
-        "hostname",
-        "user_name"
+      "rule_name": "Host Discovery",
+      "description": "System discovery activity observed.",
+      "priority": "Low",
+      "conditions": [
+        "T1082",
+        "T1033",
+        "T1087.001"
       ],
-      "rolling_timeout_minutes": 30,
-      "historical_window_minutes": 60
+      "window_seconds": 300,
+      "minimum_matches": 2,
+      "next_expected": [
+        "PowerShell Execution",
+        "Registry Access",
+        "Credential Dumping"
+      ],
+      "investigation_score": 20
     },
     {
-      "rule_name": "Multiple Critical Incidents on Single Host",
-      "anchor": {
-        "classification": "Critical Incident"
-      },
-      "match_criteria": [
-        "hostname"
+      "rule_name": "Suspicious PowerShell",
+      "conditions": [
+        "T1059.001"
       ],
-      "rolling_timeout_minutes": 60,
-      "historical_window_minutes": 120
+      "window_seconds": 120,
+      "minimum_matches": 1,
+      "next_expected": [
+        "Credential Dump",
+        "Persistence",
+        "Lateral Movement"
+      ],
+      "investigation_score": 35
     },
     {
-      "rule_name": "Suspicious Activity from Single Source IP",
-      "anchor": {
-        "classification": "Requires Investigation"
-      },
-      "match_criteria": [
-        "src_ip"
+      "rule_name": "Credential Dumping",
+      "conditions": [
+        "T1003.001"
       ],
-      "rolling_timeout_minutes": 60,
-      "historical_window_minutes": 120
+      "window_seconds": 120,
+      "minimum_matches": 1,
+      "next_expected": [
+        "Remote Login",
+        "Service Creation",
+        "SMB Activity"
+      ],
+      "investigation_score": 80
     },
     {
-      "rule_name": "Host-Based MITRE Kill Chain Progression",
-      "anchor": {
-        "classification": "Requires Investigation"
-      },
-      "match_criteria": [
-        "hostname"
+      "rule_name": "Registry Persistence",
+      "conditions": [
+        "T1112"
       ],
-      "track_progression": [
-        "mitre_tactic"
+      "window_seconds": 300,
+      "minimum_matches": 1,
+      "next_expected": [
+        "Scheduled Task",
+        "PowerShell",
+        "Service Creation"
       ],
-      "rolling_timeout_minutes": 120,
-      "historical_window_minutes": 120
+      "investigation_score": 45
     },
     {
-      "rule_name": "Dynamic Lateral Movement & Infection Spread",
-      "anchor": {
-        "classification": "Requires Investigation"
-      },
-      "pivot_fields": [
-        "src_ip",
-        "hostname",
-        "user_name",
-        "file_hash"
+      "rule_name": "Lateral Movement",
+      "conditions": [
+        "T1021",
+        "T1570"
       ],
-      "rolling_timeout_minutes": 120,
-      "historical_window_minutes": 120
+      "window_seconds": 600,
+      "minimum_matches": 1,
+      "next_expected": [
+        "Credential Access",
+        "Ransomware",
+        "Privilege Escalation"
+      ],
+      "investigation_score": 90
     },
     {
-      "rule_name": "Compromised User Account & Lateral Movement",
-      "anchor": {
-        "classification": "Requires Investigation"
-      },
-      "match_criteria": [
-        "user_name"
+      "rule_name": "Mass File Activity",
+      "conditions": [
+        "T1486"
       ],
-      "track_progression": [
-        "mitre_tactic",
-        "hostname"
-      ],
-      "rolling_timeout_minutes": 240,
-      "historical_window_minutes": 360
+      "window_seconds": 300,
+      "minimum_matches": 1,
+      "investigation_score": 40
     },
     {
-      "rule_name": "Malware Outbreak Detection (Hash Pivoting)",
-      "anchor": {
-        "classification": "Critical Incident"
-      },
-      "pivot_fields": [
-        "file_hash",
-        "hostname",
-        "src_ip"
+      "rule_name": "Ransomware Attack Chain",
+      "depends_on": [
+        "Host Discovery",
+        "Credential Dumping",
+        "Lateral Movement",
+        "Mass File Activity"
       ],
-      "rolling_timeout_minutes": 180,
-      "historical_window_minutes": 180
+      "window_seconds": 1800,
+      "priority": "Critical",
+      "investigation_score": 100
     },
     {
-      "rule_name": "Data Exfiltration Pipeline Tracking",
-      "anchor": {
-        "mitre_tactic": "Exfiltration"
-      },
-      "pivot_fields": [
-        "src_ip",
-        "dest_ip",
-        "user_name"
+      "rule_name": "Insider Data Collection",
+      "depends_on": [
+        "Directory Enumeration",
+        "Large File Access",
+        "Compression"
       ],
-      "track_progression": [
-        "mitre_technique_id"
-      ],
-      "rolling_timeout_minutes": 120,
-      "historical_window_minutes": 240
+      "window_seconds": 900,
+      "priority": "High",
+      "investigation_score": 50
     },
     {
-      "rule_name": "Rapid Worm Propagation / Network Spreader",
-      "anchor": {
-        "mitre_tactic": "Lateral Movement",
-        "classification": "Critical Incident"
-      },
-      "pivot_fields": [
-        "src_ip",
-        "dest_ip",
-        "file_hash"
+      "rule_name": "Low and Slow Campaign",
+      "depends_on": [
+        "Host Discovery",
+        "Registry Persistence",
+        "Credential Dumping",
+        "Suspicious PowerShell"
       ],
-      "track_progression": [
-        "hostname"
-      ],
-      "rolling_timeout_minutes": 60,
-      "historical_window_minutes": 120
-    },
-    {
-      "rule_name": "Graph Mode: Lateral Movement",
-      "anchor": {
-        "classification": "Requires Investigation"
-      },
-      "graph_constraints": {
-        "max_hops": 2,
-        "min_confidence": 0.5
-      },
-      "rolling_timeout_minutes": 120,
-      "historical_window_minutes": 120
+      "window_seconds": 3600,
+      "priority": "Critical",
+      "investigation_score": 100
     }
   ]
 }
