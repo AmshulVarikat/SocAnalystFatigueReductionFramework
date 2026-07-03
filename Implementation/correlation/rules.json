@@ -123,6 +123,18 @@
       ],
       "rolling_timeout_minutes": 60,
       "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Graph Mode: Lateral Movement",
+      "anchor": {
+        "classification": "Requires Investigation"
+      },
+      "graph_constraints": {
+        "max_hops": 2,
+        "min_confidence": 0.5
+      },
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
     }
   ]
 }

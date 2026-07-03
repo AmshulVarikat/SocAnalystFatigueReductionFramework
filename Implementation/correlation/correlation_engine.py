@@ -2,6 +2,7 @@ import json
 import uuid
 from typing import Dict, Any, Callable, Optional, List
 from datetime import datetime, timedelta
+import networkx as nx
 
 class Investigation:
     def __init__(self, investigation_id: str, rule: Dict[str, Any], anchor_alert: Dict[str, Any]):
@@ -136,12 +137,98 @@ class Investigation:
             return True
 
 
+class GraphInvestigation(Investigation):
+    def __init__(self, investigation_id: str, rule: Dict[str, Any], anchor_alert: Dict[str, Any]):
+        super().__init__(investigation_id, rule, anchor_alert)
+        self.graph = nx.Graph()
+        anchor_nodes = self._extract_graph_nodes(anchor_alert)
+        self.anchor_nodes = set(anchor_nodes)
+        
+        self.edge_weights = {
+            ('hash', 'session'): 1.0,
+            ('session', 'hash'): 1.0,
+            ('session', 'ip'): 0.8,
+            ('ip', 'session'): 0.8,
+            ('host', 'ip'): 0.4,
+            ('ip', 'host'): 0.4,
+            ('user', 'ip'): 0.5,
+            ('ip', 'user'): 0.5,
+        }
+        self.update_graph(anchor_nodes)
+
+    def _extract_graph_nodes(self, alert: Dict[str, Any]) -> List[tuple]:
+        alert_data = self._get_field(alert, "alert", alert)
+        nodes = []
+        
+        ip = self._get_field(alert_data, "src_ip") or self._get_field(alert, "src_ip")
+        if ip:
+            nodes.append(('ip', ip))
+            
+        hash_val = self._get_field(alert_data, "file_hash") or self._get_field(alert, "file_hash")
+        if hash_val:
+            nodes.append(('hash', hash_val))
+            
+        user = self._get_field(alert_data, "user_name") or self._get_field(alert, "user_name")
+        host = self._get_field(alert_data, "hostname") or self._get_field(alert, "hostname")
+        
+        if user and host:
+            nodes.append(('session', f"{user}@{host}"))
+        else:
+            if user:
+                nodes.append(('user', user))
+            if host:
+                nodes.append(('host', host))
+                
+        return nodes
+
+    def update_graph(self, nodes: List[tuple]):
+        self.graph.add_nodes_from(nodes)
+        for i in range(len(nodes)):
+            for j in range(i + 1, len(nodes)):
+                n1 = nodes[i]
+                n2 = nodes[j]
+                weight = self.edge_weights.get((n1[0], n2[0]), 0.5)
+                self.graph.add_edge(n1, n2, weight=weight)
+
+    def update_pivot_entities(self, alert: Dict[str, Any]):
+        super().update_pivot_entities(alert)
+        self.update_graph(self._extract_graph_nodes(alert))
+
+    def matches(self, alert: Dict[str, Any]) -> bool:
+        alert_nodes = self._extract_graph_nodes(alert)
+        if not alert_nodes:
+            return False
+            
+        existing_nodes = [n for n in alert_nodes if n in self.graph]
+        if not existing_nodes:
+            return False
+            
+        constraints = self.rule.get('graph_constraints', {})
+        max_hops = constraints.get('max_hops', 2)
+        min_confidence = constraints.get('min_confidence', 0.3)
+        
+        for inc_node in existing_nodes:
+            for anchor in self.anchor_nodes:
+                if nx.has_path(self.graph, inc_node, anchor):
+                    path = nx.shortest_path(self.graph, inc_node, anchor)
+                    path_len = len(path) - 1
+                    if path_len <= max_hops:
+                        conf = 1.0
+                        for i in range(len(path) - 1):
+                            edge_data = self.graph.get_edge_data(path[i], path[i+1])
+                            conf *= edge_data.get('weight', 0.5)
+                        if conf >= min_confidence:
+                            return True
+        return False
+
+
 class CorrelationEngine:
-    def __init__(self, db_repository, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None):
+    def __init__(self, db_repository, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None, correlation_mode: str = 'set_intersection'):
         self.db_repository = db_repository
         self.tick_interval = tick_interval
         self.rules_path = rules_path
         self.on_investigation_event = on_investigation_event
+        self.correlation_mode = correlation_mode
         
         self.active_investigations: Dict[str, Investigation] = {}
         self.alert_counter: int = 0
@@ -312,14 +399,17 @@ class CorrelationEngine:
                         # Convert sets to lists for JSON serialization in the event
                         serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
                         serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
-                        self.on_investigation_event({
+                        event_payload = {
                             "event": "INVESTIGATION_UPDATED",
                             "investigation_id": inv_id,
                             "alert_id": alert_id,
                             "current_priority": inv.current_priority,
                             "match_criteria": serializable_match_values,
                             "observed_progression": serializable_progression
-                        })
+                        }
+                        if self.correlation_mode == 'graph_based':
+                            event_payload["graph"] = nx.node_link_data(inv.graph)
+                        self.on_investigation_event(event_payload)
         return matched
 
     def _recalculate_priority(self, investigation_id: str):
@@ -371,7 +461,12 @@ class CorrelationEngine:
             return
             
         inv_id = str(uuid.uuid4())
-        inv = Investigation(inv_id, rule, alert)
+        
+        if self.correlation_mode == 'graph_based':
+            inv = GraphInvestigation(inv_id, rule, alert)
+        else:
+            inv = Investigation(inv_id, rule, alert)
+        
         
         created_at = inv.last_alert_time
         
@@ -401,7 +496,7 @@ class CorrelationEngine:
         if self.on_investigation_event:
             serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
             serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
-            self.on_investigation_event({
+            event_payload = {
                 "event": "INVESTIGATION_OPENED",
                 "investigation_id": inv_id,
                 "rule_name": rule.get("rule_name"),
@@ -410,7 +505,10 @@ class CorrelationEngine:
                 "current_priority": inv.current_priority,
                 "match_criteria": serializable_match_values,
                 "observed_progression": serializable_progression
-            })
+            }
+            if self.correlation_mode == 'graph_based':
+                event_payload["graph"] = nx.node_link_data(inv.graph)
+            self.on_investigation_event(event_payload)
 
     def _tick(self):
         self.alert_counter += 1
@@ -432,9 +530,12 @@ class CorrelationEngine:
             
             if self.on_investigation_event:
                 serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
-                self.on_investigation_event({
+                event_payload = {
                     "event": "INVESTIGATION_CLOSED",
                     "investigation_id": inv_id,
                     "closed_at": self.engine_clock.isoformat(),
                     "match_criteria": serializable_match_values
-                })
+                }
+                if self.correlation_mode == 'graph_based':
+                    event_payload["graph"] = nx.node_link_data(inv.graph)
+                self.on_investigation_event(event_payload)
