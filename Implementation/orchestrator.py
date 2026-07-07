@@ -118,7 +118,18 @@ class Orchestrator:
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
-        self.storage = SqliteAlertStorage(os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db"))
+        
+        # Wipe old database files on run
+        db_path = os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db")
+        import glob
+        for f in glob.glob(db_path + "*"):
+            try:
+                os.remove(f)
+                print(f"[*] Wiped previous database file: {f}")
+            except OSError:
+                pass
+                
+        self.storage = SqliteAlertStorage(db_path)
         self.correlator = CorrelationEngine(
             db_repository=self.storage, 
             tick_interval=10, 

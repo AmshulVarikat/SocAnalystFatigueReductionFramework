@@ -83,7 +83,10 @@ class SqliteAlertStorage(AlertStorageRepository):
                     created_at TEXT,
                     closed_at TEXT,
                     rule_name TEXT,
-                    current_priority REAL
+                    current_priority REAL,
+                    alerts_count INTEGER DEFAULT 1,
+                    match_values TEXT DEFAULT '{}',
+                    observed_progression TEXT DEFAULT '{}'
                 )
             ''')
             
@@ -92,6 +95,12 @@ class SqliteAlertStorage(AlertStorageRepository):
             columns = [col[1] for col in cursor.fetchall()]
             if 'current_priority' not in columns:
                 cursor.execute("ALTER TABLE investigations ADD COLUMN current_priority REAL DEFAULT 0.0")
+            if 'alerts_count' not in columns:
+                cursor.execute("ALTER TABLE investigations ADD COLUMN alerts_count INTEGER DEFAULT 1")
+            if 'match_values' not in columns:
+                cursor.execute("ALTER TABLE investigations ADD COLUMN match_values TEXT DEFAULT '{}'")
+            if 'observed_progression' not in columns:
+                cursor.execute("ALTER TABLE investigations ADD COLUMN observed_progression TEXT DEFAULT '{}'")
             
             # Create Investigation Mapping Table
             cursor.execute('''
@@ -280,6 +289,17 @@ class SqliteAlertStorage(AlertStorageRepository):
                 SET current_priority = ?
                 WHERE investigation_id = ?
             ''', (current_priority, investigation_id))
+            conn.commit()
+
+    def update_investigation_context(self, investigation_id: str, alerts_count: int, match_values: str, observed_progression: str) -> None:
+        """Updates the grouping context of an investigation."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE investigations 
+                SET alerts_count = ?, match_values = ?, observed_progression = ?
+                WHERE investigation_id = ?
+            ''', (alerts_count, match_values, observed_progression, investigation_id))
             conn.commit()
 
     def update_investigation_status(self, investigation_id: str, status: str, closed_at: datetime) -> None:

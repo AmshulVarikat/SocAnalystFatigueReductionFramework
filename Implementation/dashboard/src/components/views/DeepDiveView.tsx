@@ -9,6 +9,9 @@ interface Investigation {
   created_at: string;
   rule_name: string;
   current_priority: number;
+  match_values?: string;
+  observed_progression?: string;
+  alerts_count?: number;
 }
 
 interface AlertPayload {
@@ -144,8 +147,62 @@ const DeepDiveView = () => {
                  <p className="text-slate-400 font-mono text-sm">ID: {selectedId}</p>
                </div>
                
+               {(() => {
+                 const inv = investigations.find(i => i.investigation_id === selectedId);
+                 if (!inv) return null;
+                 
+                 let matchValues = {};
+                 let progression = {};
+                 try {
+                   if (inv.match_values) matchValues = JSON.parse(inv.match_values);
+                   if (inv.observed_progression) progression = JSON.parse(inv.observed_progression);
+                 } catch (e) {}
+
+                 const hasMatches = Object.keys(matchValues).length > 0;
+                 const hasProgression = Object.keys(progression).length > 0;
+
+                 if (!hasMatches && !hasProgression) return null;
+
+                 return (
+                   <div className="mb-8 p-5 bg-slate-800/60 backdrop-blur-sm border border-slate-700/80 rounded-2xl shadow-lg">
+                     <h3 className="text-lg font-bold text-slate-200 mb-4 flex items-center gap-2">
+                       <Search size={18} className="text-sky-400" />
+                       Why were these alerts grouped?
+                     </h3>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                       {hasMatches && (
+                         <div>
+                           <h4 className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-2">Matched Pivot Criteria</h4>
+                           <ul className="space-y-2">
+                             {Object.entries(matchValues).map(([k, v]) => (
+                               <li key={k} className="text-sm bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                                 <span className="text-sky-400 font-mono block mb-1">{k}</span> 
+                                 <span className="text-slate-300">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
+                       {hasProgression && (
+                         <div>
+                           <h4 className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-2">Observed Progression</h4>
+                           <ul className="space-y-2">
+                             {Object.entries(progression).map(([k, v]) => (
+                               <li key={k} className="text-sm bg-slate-900/50 p-2 rounded-lg border border-slate-700/50">
+                                 <span className="text-emerald-400 font-mono block mb-1">{k}</span> 
+                                 <span className="text-slate-300">{Array.isArray(v) ? v.join(' → ') : String(v)}</span>
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
+                     </div>
+                   </div>
+                 );
+               })()}
+               
                <div className="space-y-8 relative before:absolute before:inset-0 before:ml-5 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-700 before:to-transparent">
-                 {alerts.map((alert, idx) => (
+                 {Array.isArray(alerts) && alerts.map((alert, idx) => (
                    <div key={idx} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
                      {/* Timeline Dot */}
                      <div className="flex items-center justify-center w-10 h-10 rounded-full border-4 border-slate-900 bg-emerald-500 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-emerald-500/20 z-10">
@@ -158,9 +215,9 @@ const DeepDiveView = () => {
                           <span className="text-xs font-bold text-slate-400 bg-slate-900/50 px-2 py-1 rounded">
                             {new Date(alert.timestamp).toLocaleTimeString()}
                           </span>
-                          {alert.risk_score && (
+                          {alert.risk_score !== undefined && (
                             <span className="text-xs font-bold text-rose-400 bg-rose-400/10 px-2 py-1 rounded-full border border-rose-400/20">
-                              Risk: {alert.risk_score.toFixed(1)}
+                              Risk: {typeof alert.risk_score === 'number' ? alert.risk_score.toFixed(1) : String(alert.risk_score)}
                             </span>
                           )}
                         </div>

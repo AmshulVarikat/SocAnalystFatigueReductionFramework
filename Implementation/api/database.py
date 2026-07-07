@@ -37,6 +37,9 @@ class Investigation(Base):
     closed_at = Column(String, nullable=True)
     rule_name = Column(String)
     current_priority = Column(Float, default=0.0)
+    alerts_count = Column(Integer, default=1)
+    match_values = Column(Text, default="{}")
+    observed_progression = Column(Text, default="{}")
 
 class InvestigationMapping(Base):
     __tablename__ = "investigation_mapping"

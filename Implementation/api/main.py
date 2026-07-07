@@ -84,7 +84,10 @@ def get_active_investigations(db: Session = Depends(get_db)):
             "status": inv.status,
             "created_at": inv.created_at,
             "rule_name": inv.rule_name,
-            "current_priority": inv.current_priority
+            "current_priority": inv.current_priority,
+            "alerts_count": inv.alerts_count,
+            "match_values": inv.match_values,
+            "observed_progression": inv.observed_progression
         })
     return result
 
@@ -99,7 +102,10 @@ def get_all_investigations(db: Session = Depends(get_db)):
             "status": inv.status,
             "created_at": inv.created_at,
             "rule_name": inv.rule_name,
-            "current_priority": inv.current_priority
+            "current_priority": inv.current_priority,
+            "alerts_count": inv.alerts_count,
+            "match_values": inv.match_values,
+            "observed_progression": inv.observed_progression
         })
     return result
 
@@ -114,9 +120,12 @@ def ack_investigation(inv_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/alerts")
 def get_unified_alerts(db: Session = Depends(get_db)):
-    """Returns active investigations AND likely benign alerts unified."""
-    investigations = db.query(Investigation).filter(Investigation.status != "CLOSED").all()
-    benign_alerts = db.query(ProcessedAlert).filter(ProcessedAlert.classification == "Likely Benign").all()
+    """Returns active GROUPED investigations (not benign)."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.alerts_count > 1,
+        ~Investigation.rule_name.like("%Benign%")
+    ).all()
     
     result = []
     for inv in investigations:
@@ -127,15 +136,50 @@ def get_unified_alerts(db: Session = Depends(get_db)):
             "rule_name": inv.rule_name,
             "created_at": inv.created_at,
             "status": inv.status,
+            "alerts_count": inv.alerts_count,
         })
-    for alert in benign_alerts:
+    return result
+
+@app.get("/api/v1/investigations/solo")
+def get_solo_investigations(db: Session = Depends(get_db)):
+    """Returns active SOLO alerts/investigations (not benign)."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.alerts_count == 1,
+        ~Investigation.rule_name.like("%Benign%")
+    ).all()
+    
+    result = []
+    for inv in investigations:
         result.append({
-            "id": f"alert-{alert.id}",
+            "id": inv.investigation_id,
             "type": "alert",
-            "priority": alert.risk_score,
-            "rule_name": f"{alert.rule_id} (Benign)",
-            "created_at": alert.timestamp,
-            "status": "OPEN",
+            "priority": inv.current_priority,
+            "rule_name": inv.rule_name,
+            "created_at": inv.created_at,
+            "status": inv.status,
+            "alerts_count": inv.alerts_count,
+        })
+    return result
+
+@app.get("/api/v1/investigations/benign")
+def get_benign_investigations(db: Session = Depends(get_db)):
+    """Returns active benign investigations."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.rule_name.like("%Benign%")
+    ).all()
+    
+    result = []
+    for inv in investigations:
+        result.append({
+            "id": inv.investigation_id,
+            "type": "investigation",
+            "priority": inv.current_priority,
+            "rule_name": inv.rule_name,
+            "created_at": inv.created_at,
+            "status": inv.status,
+            "alerts_count": inv.alerts_count,
         })
     return result
 

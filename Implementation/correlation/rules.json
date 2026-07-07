@@ -92,6 +92,11 @@
       "match_criteria": [
         "src_ip"
       ],
+      "track_progression": [
+        "hostname",
+        "user_name",
+        "dest_ip"
+      ],
       "rolling_timeout_minutes": 60,
       "historical_window_minutes": 120
     },

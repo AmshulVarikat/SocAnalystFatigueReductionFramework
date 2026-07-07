@@ -20,14 +20,14 @@ const getSeverityColor = (priority: number) => {
   return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
 };
 
-const AlertsView = () => {
+const BenignAlertsView = () => {
   const [alerts, setAlerts] = useState<UnifiedAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
   const fetchAlerts = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/v1/alerts');
+      const res = await fetch('http://localhost:8000/api/v1/investigations/benign');
       const data = await res.json();
       setAlerts(data.sort((a: UnifiedAlert, b: UnifiedAlert) => b.priority - a.priority));
     } catch (e) {
@@ -72,12 +72,12 @@ const AlertsView = () => {
       {/* Header */}
       <header className="p-8 border-b border-slate-800/60 bg-slate-900/40 backdrop-blur-md sticky top-0 z-10">
         <div className="flex items-center gap-4">
-          <div className="p-3 bg-sky-500/10 rounded-2xl border border-sky-500/20">
-            <ShieldAlert className="text-sky-400" size={28} />
+          <div className="p-3 bg-blue-500/10 rounded-2xl border border-blue-500/20">
+            <ShieldCheck className="text-blue-400" size={28} />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-100 to-slate-400 tracking-tight">Grouped Investigations</h1>
-            <p className="text-slate-400 text-sm mt-2 font-medium">Correlated multi-alert investigations</p>
+            <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-slate-100 to-slate-400 tracking-tight">Benign Activity</h1>
+            <p className="text-slate-400 text-sm mt-2 font-medium">Low-priority and approved scanner activity</p>
           </div>
         </div>
       </header>
@@ -165,4 +165,4 @@ const AlertsView = () => {
   );
 };
 
-export default AlertsView;
+export default BenignAlertsView;
