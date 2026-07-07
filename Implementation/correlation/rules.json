@@ -1,6 +1,66 @@
 {
   "rules": [
     {
+      "rule_name": "Widespread PowerShell Network Connections",
+      "anchor": {
+        "rule_id": "92037"
+      },
+      "pivot_fields": [
+        "rule_id"
+      ],
+      "track_progression": [
+        "hostname",
+        "user_name"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Distributed Password Spraying / Brute Force",
+      "anchor": {
+        "rule_id": "60122"
+      },
+      "pivot_fields": [
+        "rule_id"
+      ],
+      "track_progression": [
+        "hostname",
+        "user_name"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Widespread PowerShell Script Execution",
+      "anchor": {
+        "rule_id": "92029"
+      },
+      "pivot_fields": [
+        "rule_id"
+      ],
+      "track_progression": [
+        "hostname",
+        "user_name"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Widespread Malicious File Drop",
+      "anchor": {
+        "rule_id": "92213"
+      },
+      "pivot_fields": [
+        "rule_id"
+      ],
+      "track_progression": [
+        "hostname",
+        "user_name"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
       "rule_name": "Repeated Authentication Failures to Critical Asset",
       "anchor": {
         "rule_id": "5716",
@@ -122,6 +182,100 @@
         "hostname"
       ],
       "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Aggregated Benign Activity by Host",
+      "anchor": {
+        "classification": "Likely Benign"
+      },
+      "match_criteria": [
+        "hostname"
+      ],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Aggregated Benign Activity by Source IP",
+      "anchor": {
+        "classification": "Likely Benign"
+      },
+      "match_criteria": [
+        "src_ip"
+      ],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Aggregated Benign Activity by Rule ID",
+      "anchor": {
+        "classification": "Likely Benign"
+      },
+      "match_criteria": [
+        "rule_id"
+      ],
+      "rolling_timeout_minutes": 60,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Multi-Stage Attack: Initial Access to Execution",
+      "anchor": {
+        "mitre_tactic": "Initial Access"
+      },
+      "pivot_fields": [
+        "hostname",
+        "user_name"
+      ],
+      "track_progression": [
+        "mitre_tactic"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 240
+    },
+    {
+      "rule_name": "Privilege Escalation and Persistence on Host",
+      "anchor": {
+        "mitre_tactic": "Privilege Escalation"
+      },
+      "match_criteria": [
+        "hostname"
+      ],
+      "track_progression": [
+        "mitre_tactic",
+        "user_name"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 120
+    },
+    {
+      "rule_name": "Lateral Movement to Critical Asset",
+      "anchor": {
+        "mitre_tactic": "Lateral Movement"
+      },
+      "pivot_fields": [
+        "dest_ip",
+        "user_name"
+      ],
+      "track_progression": [
+        "hostname",
+        "mitre_tactic"
+      ],
+      "rolling_timeout_minutes": 120,
+      "historical_window_minutes": 240
+    },
+    {
+      "rule_name": "Ransomware Behavior: File Modification and Exfiltration",
+      "anchor": {
+        "mitre_tactic": "Impact"
+      },
+      "pivot_fields": [
+        "hostname",
+        "file_hash"
+      ],
+      "track_progression": [
+        "mitre_tactic"
+      ],
+      "rolling_timeout_minutes": 120,
       "historical_window_minutes": 120
     }
   ]

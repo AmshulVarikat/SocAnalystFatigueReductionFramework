@@ -86,6 +86,10 @@ class AlertClassifier:
         if rule_id in self.known_noisy_rules and risk_score < investigation_threshold:
             return "Likely False Positive"
 
+        # Explicit promotion for critical rules that might be undervalued by risk score
+        if rule_id in ["92029", "92213", "92037", "60122"]:
+            return "Requires Investigation"
+
         # 4. Fallback to Risk Score Thresholds
         critical_threshold = self.numeric_thresholds.get("Critical Incident", 80)
         
