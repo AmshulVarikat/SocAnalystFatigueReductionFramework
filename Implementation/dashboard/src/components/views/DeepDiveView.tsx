@@ -19,6 +19,10 @@ interface AlertPayload {
   timestamp: string;
   src_ip?: string;
   dest_ip?: string;
+  hostname?: string;
+  username?: string;
+  process_name?: string;
+  file_hash?: string;
   mitre_tactic?: string;
   risk_score?: number;
   asset_context?: any;
@@ -225,14 +229,30 @@ const DeepDiveView = () => {
                         <h3 className="text-base font-bold text-slate-200 mb-4">{alert.rule_id}</h3>
                         
                         <div className="grid grid-cols-2 gap-4">
-                          {/* Network Data */}
-                          {(alert.src_ip || alert.dest_ip) && (
+                          {/* Identifiable Information */}
+                          {(alert.hostname || alert.username || alert.src_ip || alert.dest_ip || alert.file_hash || alert.process_name) && (
                             <div className="col-span-2 bg-slate-900/50 p-3 rounded-lg border border-slate-700/50">
-                               <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-1">Network Traffic</div>
-                               <div className="font-mono text-sm text-sky-400 flex items-center gap-2">
-                                  {alert.src_ip || 'Any'} 
-                                  <ChevronRight size={14} className="text-slate-600" /> 
-                                  {alert.dest_ip || 'Any'}
+                               <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-2">Identifiable Information</div>
+                               <div className="grid grid-cols-2 gap-y-2 gap-x-4">
+                                 {alert.hostname && (
+                                   <div><span className="text-[10px] text-slate-500 block uppercase">Host</span><span className="font-mono text-xs text-emerald-400">{alert.hostname}</span></div>
+                                 )}
+                                 {alert.username && (
+                                   <div><span className="text-[10px] text-slate-500 block uppercase">User</span><span className="font-mono text-xs text-sky-400">{alert.username}</span></div>
+                                 )}
+                                 {(alert.src_ip || alert.dest_ip) && (
+                                   <div className="col-span-2"><span className="text-[10px] text-slate-500 block uppercase">Network</span>
+                                     <div className="font-mono text-xs text-indigo-400 flex items-center gap-1 mt-0.5">
+                                        {alert.src_ip || 'Any'} <ChevronRight size={12} className="text-slate-600" /> {alert.dest_ip || 'Any'}
+                                     </div>
+                                   </div>
+                                 )}
+                                 {alert.process_name && (
+                                   <div className="col-span-2"><span className="text-[10px] text-slate-500 block uppercase">Process</span><span className="font-mono text-xs text-purple-400">{alert.process_name}</span></div>
+                                 )}
+                                 {alert.file_hash && (
+                                   <div className="col-span-2"><span className="text-[10px] text-slate-500 block uppercase">File Hash</span><span className="font-mono text-[10px] text-amber-400 break-all">{alert.file_hash}</span></div>
+                                 )}
                                </div>
                             </div>
                           )}

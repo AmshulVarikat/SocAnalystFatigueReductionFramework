@@ -208,7 +208,21 @@ def get_investigation_alerts(inv_id: str, db: Session = Depends(get_db)):
     for mapping in mappings:
         alert_db = mapping.alert
         if alert_db:
-            alerts.append(json.loads(alert_db.full_alert_payload))
+            alerts.append({
+                "id": alert_db.id,
+                "timestamp": alert_db.timestamp,
+                "rule_id": alert_db.rule_id,
+                "hostname": alert_db.hostname,
+                "username": alert_db.username,
+                "src_ip": alert_db.src_ip,
+                "dest_ip": alert_db.dest_ip,
+                "process_name": alert_db.process_name,
+                "file_hash": alert_db.file_hash,
+                "wazuh_level": alert_db.wazuh_level,
+                "mitre_tactic": alert_db.mitre_tactic,
+                "risk_score": alert_db.risk_score,
+                "classification": alert_db.classification
+            })
             
     return alerts
 
