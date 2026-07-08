@@ -1,0 +1,107 @@
+[
+  {
+    "asset_id": "SALES-PC-01",
+    "asset_type": "Workstation",
+    "criticality": 4,
+    "department": "Sales",
+    "business_function": "Sales Operations"
+  },
+  {
+    "asset_id": "HR-PC-02",
+    "asset_type": "Workstation",
+    "criticality": 4,
+    "department": "HR",
+    "business_function": "Human Resources"
+  },
+  {
+    "asset_id": "SALES-PC-03",
+    "asset_type": "Workstation",
+    "criticality": 4,
+    "department": "Sales",
+    "business_function": "Sales Operations"
+  },
+  {
+    "asset_id": "EXEC-PC-02",
+    "asset_type": "Workstation",
+    "criticality": 7,
+    "department": "Executive",
+    "business_function": "Leadership"
+  },
+  {
+    "asset_id": "APP-SRV-01",
+    "asset_type": "Server",
+    "criticality": 8,
+    "department": "IT",
+    "business_function": "Application Hosting"
+  },
+  {
+    "asset_id": "DC-02",
+    "asset_type": "Domain Controller",
+    "criticality": 10,
+    "department": "IT",
+    "business_function": "Identity and Access Management"
+  },
+  {
+    "asset_id": "EXCHANGE-01",
+    "asset_type": "Server",
+    "criticality": 9,
+    "department": "IT",
+    "business_function": "Email Communications"
+  },
+  {
+    "asset_id": "SALES-PC-02",
+    "asset_type": "Workstation",
+    "criticality": 4,
+    "department": "Sales",
+    "business_function": "Sales Operations"
+  },
+  {
+    "asset_id": "IT-ADMIN-PC",
+    "asset_type": "Workstation",
+    "criticality": 7,
+    "department": "IT",
+    "business_function": "IT Administration"
+  },
+  {
+    "asset_id": "DB-SRV-01",
+    "asset_type": "Server",
+    "criticality": 9,
+    "department": "IT",
+    "business_function": "Database Hosting"
+  },
+  {
+    "asset_id": "DC-01",
+    "asset_type": "Domain Controller",
+    "criticality": 10,
+    "department": "IT",
+    "business_function": "Identity and Access Management"
+  },
+  {
+    "asset_id": "HR-PC-01",
+    "asset_type": "Workstation",
+    "criticality": 4,
+    "department": "HR",
+    "business_function": "Human Resources"
+  },
+  {
+    "asset_id": "FILE-SRV-01",
+    "asset_type": "Server",
+    "criticality": 8,
+    "department": "IT",
+    "business_function": "File Storage"
+  },
+  {
+    "asset_id": "WEB-SRV-01",
+    "asset_type": "Server",
+    "criticality": 8,
+    "department": "IT",
+    "business_function": "Web Hosting"
+  },
+  {
+    "asset_id": "EXEC-PC-01",
+    "asset_type": "Workstation",
+    "criticality": 7,
+    "department": "Executive",
+    "business_function": "Leadership"
+  }
+]

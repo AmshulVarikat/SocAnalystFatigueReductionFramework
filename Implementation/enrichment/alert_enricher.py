@@ -13,6 +13,21 @@ class AlertEnricher:
         self.local_threat_repo = local_threat_repo
         # NEW: The Local Memory Cache
         self._ioc_cache: Dict[str, dict] = {}
+        
+        # Load MITRE ATT&CK Data
+        self.mitre_data = None
+        try:
+            import os
+            from mitreattack.stix20 import MitreAttackData
+            # Use path relative to this file
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            mitre_json_path = os.path.join(current_dir, "enterprise-attack.json")
+            if os.path.exists(mitre_json_path):
+                self.mitre_data = MitreAttackData(mitre_json_path)
+            else:
+                print(f"[!] Warning: MITRE ATT&CK json not found at {mitre_json_path}")
+        except Exception as e:
+            print(f"[!] Warning: Could not load MitreAttackData: {e}")
 
     def enrich(self, alert: Any) -> Any:
         """Enriches a single NormalizedAlert with context in-place."""
@@ -22,6 +37,7 @@ class AlertEnricher:
             
         self._enrich_asset_context(alert)
         self._enrich_threat_intel(alert)
+        self._enrich_mitre_tactic(alert)
         return alert
 
     def _enrich_asset_context(self, alert: Any):
@@ -96,3 +112,32 @@ class AlertEnricher:
         alert.threat_intel["matched_indicators"] = matched_intel
         alert.threat_intel["highest_reputation"] = highest_reputation
         alert.threat_intel["max_confidence"] = max_confidence
+
+    def _enrich_mitre_tactic(self, alert: Any):
+        """Enriches the alert with MITRE ATT&CK tactic information based on the technique ID."""
+        if not self.mitre_data:
+            return
+            
+        technique_id = getattr(alert, "mitre_technique_id", None)
+        if not technique_id:
+            return
+            
+        # Extract base technique ID in case it includes a subtechnique (e.g., T1059.001)
+        # Often tactics apply to the parent technique in STIX. But let's try direct first.
+        obj = self.mitre_data.get_object_by_attack_id(technique_id, "attack-pattern")
+        
+        # If not found directly, try parent technique if it's a subtechnique
+        if not obj and "." in technique_id:
+            parent_id = technique_id.split(".")[0]
+            obj = self.mitre_data.get_object_by_attack_id(parent_id, "attack-pattern")
+            
+        if obj:
+            if not getattr(alert, "mitre_technique_name", None):
+                alert.mitre_technique_name = obj.name
+                
+            tactics = self.mitre_data.get_tactics_by_technique(obj.id)
+            if tactics:
+                # Typically can be multiple tactics, we'll comma-separate their names
+                tactic_names = [t.name for t in tactics if hasattr(t, "name")]
+                if tactic_names:
+                    alert.mitre_tactic = ", ".join(tactic_names)
