@@ -84,8 +84,117 @@ def get_active_investigations(db: Session = Depends(get_db)):
             "status": inv.status,
             "created_at": inv.created_at,
             "rule_name": inv.rule_name,
-            "current_priority": inv.current_priority
+            "current_priority": inv.current_priority,
+            "alerts_count": inv.alerts_count,
+            "match_values": inv.match_values,
+            "observed_progression": inv.observed_progression
         })
+    return result
+
+@app.get("/api/v1/investigations/all")
+def get_all_investigations(db: Session = Depends(get_db)):
+    investigations = db.query(Investigation).all()
+    
+    result = []
+    for inv in investigations:
+        result.append({
+            "investigation_id": inv.investigation_id,
+            "status": inv.status,
+            "created_at": inv.created_at,
+            "rule_name": inv.rule_name,
+            "current_priority": inv.current_priority,
+            "alerts_count": inv.alerts_count,
+            "match_values": inv.match_values,
+            "observed_progression": inv.observed_progression
+        })
+    return result
+
+@app.post("/api/v1/investigations/{inv_id}/ack")
+def ack_investigation(inv_id: str, db: Session = Depends(get_db)):
+    inv = db.query(Investigation).filter(Investigation.investigation_id == inv_id).first()
+    if inv:
+        inv.status = "CLOSED"
+        db.commit()
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="Investigation not found")
+
+@app.get("/api/v1/alerts")
+def get_unified_alerts(db: Session = Depends(get_db)):
+    """Returns active GROUPED investigations (not benign)."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.alerts_count > 1,
+        ~Investigation.rule_name.like("%Benign%")
+    ).all()
+    
+    result = []
+    for inv in investigations:
+        result.append({
+            "id": inv.investigation_id,
+            "type": "investigation",
+            "priority": inv.current_priority,
+            "rule_name": inv.rule_name,
+            "created_at": inv.created_at,
+            "status": inv.status,
+            "alerts_count": inv.alerts_count,
+        })
+    return result
+
+@app.get("/api/v1/investigations/solo")
+def get_solo_investigations(db: Session = Depends(get_db)):
+    """Returns active SOLO alerts/investigations (not benign)."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.alerts_count == 1,
+        ~Investigation.rule_name.like("%Benign%")
+    ).all()
+    
+    result = []
+    for inv in investigations:
+        result.append({
+            "id": inv.investigation_id,
+            "type": "alert",
+            "priority": inv.current_priority,
+            "rule_name": inv.rule_name,
+            "created_at": inv.created_at,
+            "status": inv.status,
+            "alerts_count": inv.alerts_count,
+        })
+    return result
+
+@app.get("/api/v1/investigations/benign")
+def get_benign_investigations(db: Session = Depends(get_db)):
+    """Returns active benign investigations."""
+    investigations = db.query(Investigation).filter(
+        Investigation.status != "CLOSED",
+        Investigation.rule_name.like("%Benign%")
+    ).all()
+    
+    result = []
+    for inv in investigations:
+        result.append({
+            "id": inv.investigation_id,
+            "type": "investigation",
+            "priority": inv.current_priority,
+            "rule_name": inv.rule_name,
+            "created_at": inv.created_at,
+            "status": inv.status,
+            "alerts_count": inv.alerts_count,
+        })
+    return result
+
+@app.get("/api/v1/alerts/false-positives")
+def get_false_positives(db: Session = Depends(get_db)):
+    alerts = db.query(ProcessedAlert).filter(ProcessedAlert.classification == "Likely False Positive").all()
+    result = []
+    import json
+    for alert in alerts:
+        try:
+            payload = json.loads(alert.full_alert_payload)
+            payload["_internal_id"] = alert.id
+            result.append(payload)
+        except Exception:
+            pass
     return result
 
 @app.get("/api/v1/investigations/{inv_id}/alerts")
@@ -99,7 +208,21 @@ def get_investigation_alerts(inv_id: str, db: Session = Depends(get_db)):
     for mapping in mappings:
         alert_db = mapping.alert
         if alert_db:
-            alerts.append(json.loads(alert_db.full_alert_payload))
+            alerts.append({
+                "id": alert_db.id,
+                "timestamp": alert_db.timestamp,
+                "rule_id": alert_db.rule_id,
+                "hostname": alert_db.hostname,
+                "username": alert_db.username,
+                "src_ip": alert_db.src_ip,
+                "dest_ip": alert_db.dest_ip,
+                "process_name": alert_db.process_name,
+                "file_hash": alert_db.file_hash,
+                "wazuh_level": alert_db.wazuh_level,
+                "mitre_tactic": alert_db.mitre_tactic,
+                "risk_score": alert_db.risk_score,
+                "classification": alert_db.classification
+            })
             
     return alerts
 

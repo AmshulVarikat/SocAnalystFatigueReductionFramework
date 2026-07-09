@@ -1,5 +1,4 @@
 # Implementation/enrichment/alert_enricher.py
-import asyncio
 from typing import Any, Optional, Dict
 from .asset_repository import AssetRepository
 from .threat_intel_repository import ThreatIntelRepository
@@ -9,12 +8,26 @@ class AlertEnricher:
     Phase 7: Alert Enrichment Module.
     Attaches Asset Context and Threat Intelligence to Normalized Alerts.
     """
-    def __init__(self, asset_repo: AssetRepository, local_threat_repo: Optional[ThreatIntelRepository] = None, otx_repo: Optional[ThreatIntelRepository] = None):
+    def __init__(self, asset_repo: AssetRepository, local_threat_repo: Optional[ThreatIntelRepository] = None):
         self.asset_repo = asset_repo
         self.local_threat_repo = local_threat_repo
-        self.otx_repo = otx_repo
         # NEW: The Local Memory Cache
         self._ioc_cache: Dict[str, dict] = {}
+        
+        # Load MITRE ATT&CK Data
+        self.mitre_data = None
+        try:
+            import os
+            from mitreattack.stix20 import MitreAttackData
+            # Use path relative to this file
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            mitre_json_path = os.path.join(current_dir, "enterprise-attack.json")
+            if os.path.exists(mitre_json_path):
+                self.mitre_data = MitreAttackData(mitre_json_path)
+            else:
+                print(f"[!] Warning: MITRE ATT&CK json not found at {mitre_json_path}")
+        except Exception as e:
+            print(f"[!] Warning: Could not load MitreAttackData: {e}")
 
     def enrich(self, alert: Any) -> Any:
         """Enriches a single NormalizedAlert with context in-place."""
@@ -24,15 +37,7 @@ class AlertEnricher:
             
         self._enrich_asset_context(alert)
         self._enrich_threat_intel(alert)
-        return alert
-
-    async def aenrich(self, alert: Any) -> Any:
-        """Asynchronous version of enrich."""
-        if not hasattr(alert, "enrichment"):
-            alert.enrichment = {}
-            
-        self._enrich_asset_context(alert)
-        await self._aenrich_threat_intel(alert)
+        self._enrich_mitre_tactic(alert)
         return alert
 
     def _enrich_asset_context(self, alert: Any):
@@ -61,45 +66,10 @@ class AlertEnricher:
                 "is_unmanaged": True
             }
 
-    def _determine_type(self, ioc: str) -> Any:
-        try:
-            from OTXv2 import IndicatorTypes
-        except ImportError:
-            return None
-            
-        import re
-        
-        # Check if it's an IPv4
-        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ioc):
-            return IndicatorTypes.IPv4
-        
-        # Check if it's a Hash
-        if re.match(r"^[a-fA-F0-9]{32}$", ioc):
-            return IndicatorTypes.FILE_HASH_MD5
-        if re.match(r"^[a-fA-F0-9]{40}$", ioc):
-            return IndicatorTypes.FILE_HASH_SHA1
-        if re.match(r"^[a-fA-F0-9]{64}$", ioc):
-            return IndicatorTypes.FILE_HASH_SHA256
-            
-        # Check if it's a URL
-        if ioc.startswith("http://") or ioc.startswith("https://"):
-            return IndicatorTypes.URL
-            
-        # Fallback to domain
-        return IndicatorTypes.DOMAIN
-
     def _enrich_threat_intel(self, alert: Any):
-        """
-        Original synchronous enrichment for backward compatibility
-        """
-        # (This is kept identical to original behavior before asyncio upgrade if needed,
-        # but could just point to a run_until_complete if we wanted, however the new code uses aenrich directly).
-        alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
-        
-    async def _aenrich_threat_intel(self, alert: Any):
         alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
 
-        if not self.local_threat_repo and not self.otx_repo:
+        if not self.local_threat_repo:
             return
 
         observables = set()
@@ -108,9 +78,8 @@ class AlertEnricher:
         if hasattr(alert, 'hashes'): observables.update(alert.hashes)
 
         matched_intel = []
-        missing_from_cache = []
 
-        # 1. Check Local Cache / Local DB first
+        # Check Local Cache / Local DB first
         for obs in observables:
             if not obs: continue
             
@@ -118,31 +87,13 @@ class AlertEnricher:
                 matched_intel.append(self._ioc_cache[obs])
             else:
                 # Try local DB
-                ioc_type = self._determine_type(obs)
-                intel = self.local_threat_repo.lookup_ioc(obs, ioc_type) if self.local_threat_repo else None
+                intel = self.local_threat_repo.lookup_ioc(obs)
                 
                 if intel:
                     self._ioc_cache[obs] = intel
                     matched_intel.append(intel)
-                else:
-                    # Mark for external lookup
-                    missing_from_cache.append((obs, ioc_type))
 
-        # 2. Asynchronously fetch all missing IOCs from OTX at the SAME TIME
-        if missing_from_cache and self.otx_repo:
-            tasks = [self.otx_repo.alookup_ioc(obs, ioc_type) for obs, ioc_type in missing_from_cache]
-            otx_results = await asyncio.gather(*tasks) # Pauses here until ALL requests finish
-
-            for (obs, ioc_type), otx_intel in zip(missing_from_cache, otx_results):
-                if otx_intel and "error" not in otx_intel:
-                    self._ioc_cache[obs] = otx_intel
-                    matched_intel.append(otx_intel)
-                    
-                    if hasattr(self.local_threat_repo, "add_ioc"):
-                        otx_intel["type"] = ioc_type
-                        self.local_threat_repo.add_ioc(otx_intel)
-
-        # 3. NOW calculate the scores (because we actually have the data!)
+        # Calculate the scores
         rep_weights = {"malicious": 3, "suspicious": 2, "unknown": 1, "known_benign": 0, "safe": 0}
         highest_reputation = "unknown"
         max_confidence = 0
@@ -161,3 +112,32 @@ class AlertEnricher:
         alert.threat_intel["matched_indicators"] = matched_intel
         alert.threat_intel["highest_reputation"] = highest_reputation
         alert.threat_intel["max_confidence"] = max_confidence
+
+    def _enrich_mitre_tactic(self, alert: Any):
+        """Enriches the alert with MITRE ATT&CK tactic information based on the technique ID."""
+        if not self.mitre_data:
+            return
+            
+        technique_id = getattr(alert, "mitre_technique_id", None)
+        if not technique_id:
+            return
+            
+        # Extract base technique ID in case it includes a subtechnique (e.g., T1059.001)
+        # Often tactics apply to the parent technique in STIX. But let's try direct first.
+        obj = self.mitre_data.get_object_by_attack_id(technique_id, "attack-pattern")
+        
+        # If not found directly, try parent technique if it's a subtechnique
+        if not obj and "." in technique_id:
+            parent_id = technique_id.split(".")[0]
+            obj = self.mitre_data.get_object_by_attack_id(parent_id, "attack-pattern")
+            
+        if obj:
+            if not getattr(alert, "mitre_technique_name", None):
+                alert.mitre_technique_name = obj.name
+                
+            tactics = self.mitre_data.get_tactics_by_technique(obj.id)
+            if tactics:
+                # Typically can be multiple tactics, we'll comma-separate their names
+                tactic_names = [t.name for t in tactics if hasattr(t, "name")]
+                if tactic_names:
+                    alert.mitre_tactic = ", ".join(tactic_names)

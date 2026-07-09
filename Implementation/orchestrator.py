@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-import asyncio
 import threading
 import queue
 import httpx
@@ -14,11 +13,11 @@ from dataclasses import asdict
 import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset2")
+DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3")
 DATASET_GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json")
 
 # Enrichment Databases
-ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/assets.json")
+ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3/assets.json")
 THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel_dataset2.json")
 
 # Output configuration
@@ -46,7 +45,6 @@ class Ingest:
 # Phase 7: Enrichment
 from Implementation.enrichment.asset_repository import JsonAssetRepository
 from Implementation.enrichment.threat_intel_repository import JsonThreatIntelRepository, CompositeThreatIntelRepository
-from Implementation.enrichment.alienvault_repository import AlienVaultRepository
 from Implementation.enrichment.alert_enricher import AlertEnricher
 
 # Phase 8: Risk Scoring
@@ -110,23 +108,28 @@ class Orchestrator:
         self.asset_repo = JsonAssetRepository(ASSET_DB_PATH)
         json_threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
         
-        # TODO: CHANGE THIS API KEY LATER
-        # Using a hardcoded placeholder as requested, with a clear visible comment.
-        # otx_api_key = "HARDCODED_PLACEHOLDER_KEY_CHANGE_ME"
-        # alienvault_repo = AlienVaultRepository(api_key=otx_api_key)
-        
         self.threat_repo = CompositeThreatIntelRepository([json_threat_repo])
         
         # 2. Initialize Pipeline Modules
         self.enricher = AlertEnricher(
             asset_repo=self.asset_repo, 
-            local_threat_repo=json_threat_repo, 
-            otx_repo=None
+            local_threat_repo=json_threat_repo
         )
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
         self.classifier = AlertClassifier(rules_path=CLASSIFICATION_RULES_PATH)
-        self.storage = SqliteAlertStorage(os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db"))
+        
+        # Wipe old database files on run
+        db_path = os.path.join(PROJECT_ROOT, "Implementation/storage/alerts.db")
+        import glob
+        for f in glob.glob(db_path + "*"):
+            try:
+                os.remove(f)
+                print(f"[*] Wiped previous database file: {f}")
+            except OSError:
+                pass
+                
+        self.storage = SqliteAlertStorage(db_path)
         self.correlator = CorrelationEngine(
             db_repository=self.storage, 
             tick_interval=10, 
@@ -337,9 +340,9 @@ class Orchestrator:
 
         self._log(f"\n[*] Stage 6 Complete. Processed {idx + 1} alerts.", True)
 
-    async def run_async_pipeline(self, batch_size=20):
-        self._setup_stage_logging("stage_6_async_correlation")
-        self._log("=== RUNNING ASYNC PIPELINE ===", True)
+    def run_pipeline(self, batch_size=20):
+        self._setup_stage_logging("stage_6_correlation")
+        self._log("=== RUNNING PIPELINE ===", True)
         stream = self._get_replay_stream()
         
         batch = []
@@ -347,19 +350,18 @@ class Orchestrator:
             batch.append(envelope)
             
             if len(batch) >= batch_size:
-                await self._process_batch(batch)
+                self._process_batch(batch)
                 batch = []
                 
         if batch:
-            await self._process_batch(batch)
+            self._process_batch(batch)
 
-    async def _process_batch(self, batch):
+    def _process_batch(self, batch):
         # 1. Synchronous Ingest (Fast)
         normalized_alerts = [self.ingest_pipeline.process(env) for env in batch]
         
-        # 2. Asynchronous Enrichment (Concurrent Network I/O)
-        enrich_tasks = [self.enricher.aenrich(alert) for alert in normalized_alerts]
-        enriched_alerts = await asyncio.gather(*enrich_tasks)
+        # 2. Synchronous Enrichment
+        enriched_alerts = [self.enricher.enrich(alert) for alert in normalized_alerts]
         
         # 3. Synchronous Scoring & Correlation (Maintains chronological order)
         for alert in enriched_alerts:
@@ -389,4 +391,4 @@ if __name__ == "__main__":
     # orchestrator.test_stage_5_classification()
     # orchestrator.test_stage_6_correlation()
     
-    asyncio.run(orchestrator.run_async_pipeline(batch_size=20))
+    orchestrator.run_pipeline(batch_size=20)

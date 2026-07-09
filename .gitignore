@@ -1,9 +1,9 @@
 .venv/
 .DS_Store
 outputs/
-Implementation/inputs/
 __pycache__/
 *.pyc
+test_db.py
 
 # SQLite Database files
 *.db
@@ -17,3 +17,4 @@ CodeSamples/
 Implementation_Details.txt
 
 Validation-001/
+Paper/

@@ -107,7 +107,9 @@ class Investigation:
                     val = self._get_field(alert, field)
                 if val is not None:
                     vals = set(val) if isinstance(val, list) else {val}
-                    if self.match_values.get(field, set()).intersection(vals):
+                    vals = {v for v in vals if v and str(v).strip()}
+                    expected = {v for v in self.match_values.get(field, set()) if v and str(v).strip()}
+                    if vals and expected.intersection(vals):
                         return True
             return False # If there are pivot fields, we must intersect with at least one
         
@@ -120,7 +122,10 @@ class Investigation:
                     val = self._get_field(alert, criterion)
                 
                 vals = set(val) if isinstance(val, list) else {val} if val is not None else set()
-                if not expected_values.intersection(vals):
+                # Prevent empty string black holes
+                vals = {v for v in vals if v and str(v).strip()}
+                
+                if not vals or not expected_values.intersection(vals):
                     return False
                     
             progression_keys = self.rule.get('track_progression', [])
@@ -306,12 +311,15 @@ class CorrelationEngine:
                     self._recalculate_priority(inv_id)
                     self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
                     
+                    serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
+                    serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
+                    
+                    if hasattr(self.db_repository, 'update_investigation_context'):
+                        self.db_repository.update_investigation_context(inv_id, inv.total_alerts_count, json.dumps(serializable_match_values), json.dumps(serializable_progression))
+                    
                     matched = True
                     
                     if self.on_investigation_event:
-                        # Convert sets to lists for JSON serialization in the event
-                        serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
-                        serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
                         self.on_investigation_event({
                             "event": "INVESTIGATION_UPDATED",
                             "investigation_id": inv_id,
@@ -323,6 +331,7 @@ class CorrelationEngine:
         return matched
 
     def _recalculate_priority(self, investigation_id: str):
+        import math
         inv = self.active_investigations.get(investigation_id)
         if not inv:
             return
@@ -333,37 +342,75 @@ class CorrelationEngine:
         # Calculate unique phases hit if tracking MITRE tactics
         unique_phases = len(inv.observed_progression.get('mitre_tactic', set()))
         
-        # Base calculation
-        p_total = p_max + (n - 1) * 2.0
+        # Base calculation: Use logarithmic scaling to prevent instant maxing out
+        # E.g., log2(32 alerts) = 5. 5 * 3.0 = 15 points added to max risk score
+        alert_volume_boost = (math.log2(n) * 3.0) if n > 0 else 0
+        p_total = p_max + alert_volume_boost
         
-        # NEW: Progression Multiplier 
-        # If an attacker has hit 3 different MITRE tactics (e.g., Access -> Execution -> Persistence)
-        # we add a massive priority boost (e.g., +15 points per unique phase beyond the first)
-        if unique_phases > 1:
-            p_total += (unique_phases - 1) * 15.0
+        # Cap the score at 90 unless there's an active attack pattern
+        max_base_score = 90.0
+        
+        if unique_phases <= 1:
+            inv.current_priority = min(max_base_score, p_total)
+            return
+            
+        # Progression Multiplier: Active attack pattern detected!
+        # This is where we allow it to reach 100.
+        progression_boost = math.log2(unique_phases) * 15.0
+        p_total += progression_boost
         
         inv.current_priority = min(100.0, p_total)
 
     def _evaluate_new_triggers(self, alert: Dict[str, Any]):
         classification = alert.get("classification", "")
-        if classification in ["Likely Benign", "Likely False Positive"]:
-            return
 
         alert_data = self._get_field(alert, "alert", alert)
         for rule in self.rules:
             anchor = rule.get("anchor", {})
+            
+            # If the alert is benign/FP, ONLY evaluate rules that explicitly look for it
+            if classification in ["Likely Benign", "Likely False Positive"]:
+                if anchor.get("classification") not in ["Likely Benign", "Likely False Positive"]:
+                    continue
+            
             match = True
             for k, v in anchor.items():
                 val = self._get_field(alert_data, k)
                 if val is None:
                     val = self._get_field(alert, k)
+                    
                 if str(val) != str(v):
                     match = False
                     break
             
             if match:
-                self._spawn_investigation(alert, rule)
-                break
+                valid = True
+                for criterion in rule.get('match_criteria', []):
+                    val = self._get_field(alert_data, criterion)
+                    if val is None:
+                        val = self._get_field(alert, criterion)
+                    
+                    # Must have a non-empty value for each match_criterion
+                    if not val or not str(val).strip():
+                        valid = False
+                        break
+                
+                pivot_fields = rule.get('pivot_fields', [])
+                if valid and pivot_fields:
+                    has_pivot = False
+                    for p in pivot_fields:
+                        val = self._get_field(alert_data, p)
+                        if val is None:
+                            val = self._get_field(alert, p)
+                        if val and str(val).strip():
+                            has_pivot = True
+                            break
+                    if not has_pivot:
+                        valid = False
+                        
+                if valid:
+                    self._spawn_investigation(alert, rule)
+                    break
 
     def _spawn_investigation(self, alert: Dict[str, Any], rule: Dict[str, Any], forced_priority: float = None):
         alert_id = self._get_field(alert, "_storage_id")
@@ -398,9 +445,13 @@ class CorrelationEngine:
             
         self.db_repository.update_investigation_priority(inv_id, inv.current_priority)
         
+        serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
+        serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
+        
+        if hasattr(self.db_repository, 'update_investigation_context'):
+            self.db_repository.update_investigation_context(inv_id, inv.total_alerts_count, json.dumps(serializable_match_values), json.dumps(serializable_progression))
+        
         if self.on_investigation_event:
-            serializable_progression = {k: list(v) for k, v in inv.observed_progression.items()}
-            serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
             self.on_investigation_event({
                 "event": "INVESTIGATION_OPENED",
                 "investigation_id": inv_id,
@@ -413,28 +464,5 @@ class CorrelationEngine:
             })
 
     def _tick(self):
-        self.alert_counter += 1
-        if self.alert_counter >= self.tick_interval:
-            self._evaluate_timeouts()
-            self.alert_counter = 0
-
-    def _evaluate_timeouts(self):
-        to_close = []
-        for inv_id, inv in self.active_investigations.items():
-            timeout_mins = inv.rule.get("rolling_timeout_minutes", 30)
-            if self.engine_clock > inv.last_alert_time + timedelta(minutes=timeout_mins):
-                to_close.append(inv_id)
-                
-        for inv_id in to_close:
-            inv = self.active_investigations.pop(inv_id)
-            inv.status = "CLOSED"
-            self.db_repository.update_investigation_status(inv_id, "CLOSED", self.engine_clock)
-            
-            if self.on_investigation_event:
-                serializable_match_values = {k: list(v) if isinstance(v, set) else v for k, v in inv.match_values.items()}
-                self.on_investigation_event({
-                    "event": "INVESTIGATION_CLOSED",
-                    "investigation_id": inv_id,
-                    "closed_at": self.engine_clock.isoformat(),
-                    "match_criteria": serializable_match_values
-                })
+        # Timeouts are no longer evaluated. Investigations remain open until manually ACKed.
+        pass
