@@ -1,0 +1,16 @@
+[
+  {
+    "asset_id": "KNOWN-GOOD-PC",
+    "asset_type": "Workstation",
+    "criticality": 3,
+    "department": "Finance",
+    "business_function": "Standard Operations"
+  },
+  {
+    "asset_id": "KNOWN-BAD-PC",
+    "asset_type": "Honeypot",
+    "criticality": 10,
+    "department": "Security",
+    "business_function": "Threat Isolation"
+  }
+]

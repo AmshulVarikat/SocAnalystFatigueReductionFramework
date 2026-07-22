@@ -1,0 +1,17 @@
+{
+  "10.10.10.11": {
+    "criticality": "high",
+    "owner": "HR",
+    "device_type": "workstation"
+  },
+  "10.10.10.15": {
+    "criticality": "low",
+    "owner": "Sales",
+    "device_type": "workstation"
+  },
+  "10.10.10.100": {
+    "criticality": "critical",
+    "owner": "IT",
+    "device_type": "server"
+  }
+}

@@ -142,11 +142,13 @@ class Investigation:
 
 
 class CorrelationEngine:
-    def __init__(self, db_repository, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None):
+    def __init__(self, db_repository, tick_interval: int = 10, rules_path: str = None, on_investigation_event: Optional[Callable] = None, enable_entity_pivoting: bool = True, enable_temporal_grouping: bool = True):
         self.db_repository = db_repository
         self.tick_interval = tick_interval
         self.rules_path = rules_path
         self.on_investigation_event = on_investigation_event
+        self.enable_entity_pivoting = enable_entity_pivoting
+        self.enable_temporal_grouping = enable_temporal_grouping
         
         self.active_investigations: Dict[str, Investigation] = {}
         self.alert_counter: int = 0
@@ -167,6 +169,11 @@ class CorrelationEngine:
             with open(self.rules_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 self.rules = data.get("rules", [])
+                
+            if not self.enable_entity_pivoting:
+                for rule in self.rules:
+                    if 'pivot_fields' in rule:
+                        rule['pivot_fields'] = []
         except Exception as e:
             print(f"[!] CorrelationEngine failed to load rules from {self.rules_path}: {e}")
 
@@ -179,7 +186,10 @@ class CorrelationEngine:
             self._tick()
             return
             
-        density_matched = self._evaluate_temporal_density(alert)
+        density_matched = False
+        if self.enable_temporal_grouping:
+            density_matched = self._evaluate_temporal_density(alert)
+            
         if density_matched:
             # Spawn a synthetic investigation
             alert_data = self._get_field(alert, "alert", alert)

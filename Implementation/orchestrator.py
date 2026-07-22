@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import json
 import threading
 import queue
@@ -13,12 +14,12 @@ from dataclasses import asdict
 import os
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3")
+DATASET_ALERTS_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset4")
 DATASET_GROUND_TRUTH_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset1/GroundTruth/ground_truth.json")
 
 # Enrichment Databases
-ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset3/assets.json")
-THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Validation-001/threat_intel_dataset2.json")
+ASSET_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Dataset4/assets.json")
+THREAT_INTEL_DB_PATH = os.path.join(PROJECT_ROOT, "Implementation/inputs/Test_Data/threat_intel.json")
 
 # Output configuration
 MAX_TERMINAL_OUTPUTS = 3
@@ -95,7 +96,7 @@ class Orchestrator:
     Central Controller for the SOC Alert Prioritization Framework.
     Wires together Replay, Ingest, Normalization, and Enrichment streams.
     """
-    def __init__(self, use_dashboard: bool = False):
+    def __init__(self, use_dashboard: bool = False, enable_threat_intel: bool = True, enable_entity_pivoting: bool = True, enable_temporal_grouping: bool = True):
         print(f"[*] Initializing Orchestrator Pipeline...")
         self.use_dashboard = use_dashboard
         if self.use_dashboard:
@@ -106,14 +107,20 @@ class Orchestrator:
         
         # 1. Initialize Enrichment Repositories
         self.asset_repo = JsonAssetRepository(ASSET_DB_PATH)
-        json_threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
         
-        self.threat_repo = CompositeThreatIntelRepository([json_threat_repo])
+        self.enable_threat_intel = enable_threat_intel
+        if self.enable_threat_intel:
+            json_threat_repo = JsonThreatIntelRepository(THREAT_INTEL_DB_PATH)
+            self.threat_repo = CompositeThreatIntelRepository([json_threat_repo])
+        else:
+            json_threat_repo = None
+            self.threat_repo = None
         
         # 2. Initialize Pipeline Modules
         self.enricher = AlertEnricher(
             asset_repo=self.asset_repo, 
-            local_threat_repo=json_threat_repo
+            local_threat_repo=json_threat_repo,
+            enable_threat_intel=self.enable_threat_intel
         )
         self.ingest_pipeline = Ingest() 
         self.risk_scorer = AlertRiskScorer()
@@ -134,11 +141,23 @@ class Orchestrator:
             db_repository=self.storage, 
             tick_interval=10, 
             rules_path=os.path.join(PROJECT_ROOT, "Implementation/correlation/rules.json"),
-            on_investigation_event=self._handle_investigation_event
+            on_investigation_event=self._handle_investigation_event,
+            enable_entity_pivoting=enable_entity_pivoting,
+            enable_temporal_grouping=enable_temporal_grouping
         )
 
         # Setup Logging
         self.output_file = None
+        self.metrics_file = None
+        self.global_metrics = {
+            'total_alerts': 0,
+            'total_time': 0,
+            'ingest_time': 0,
+            'enrich_time': 0,
+            'scoring_time': 0,
+            'storage_time': 0,
+            'correlation_time': 0
+        }
 
     def _setup_stage_logging(self, stage_name: str):
         if self.output_file and not self.output_file.closed:
@@ -154,9 +173,73 @@ class Orchestrator:
         self.output_file = open(log_path, 'w', encoding='utf-8')
         print(f"[*] Output for {stage_name} will be logged to: {log_path}")
 
+    def _setup_metrics_logging(self):
+        if self.metrics_file and not self.metrics_file.closed:
+            self.metrics_file.close()
+            
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        stage_dir = os.path.join(project_root, "outputs", "metrics")
+        os.makedirs(stage_dir, exist_ok=True)
+        
+        log_filename = f"run_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        log_path = os.path.join(stage_dir, log_filename)
+        
+        self.metrics_file = open(log_path, 'w', encoding='utf-8')
+        print(f"[*] Performance Metrics will be logged to: {log_path}")
+
+    def _dump_ablation_metrics(self, run_name: str, pipeline_total_time: float):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        stage_dir = os.path.join(project_root, "outputs", "Ablation")
+        os.makedirs(stage_dir, exist_ok=True)
+        
+        log_path = os.path.join(stage_dir, f"{run_name}_results.txt")
+        
+        # Calculate derived metrics
+        initial_alerts = self.global_metrics['total_alerts']
+        active_investigations = len(self.correlator.active_investigations)
+        compression_ratio = (active_investigations / initial_alerts * 100) if initial_alerts > 0 else 0
+        
+        avg_alerts_per_inv = initial_alerts / active_investigations if active_investigations > 0 else 0
+        avg_eps = initial_alerts / pipeline_total_time if pipeline_total_time > 0 else 0
+        
+        avg_max_risk = sum(inv.max_risk_score for inv in self.correlator.active_investigations.values()) / active_investigations if active_investigations > 0 else 0
+        avg_priority = sum(inv.current_priority for inv in self.correlator.active_investigations.values()) / active_investigations if active_investigations > 0 else 0
+        
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"=== ABLATION STUDY RESULTS: {run_name} ===\n")
+            f.write(f"Date: {datetime.now().isoformat()}\n")
+            f.write(f"-----------------------------------------\n")
+            f.write(f"Total Alerts Ingested: {initial_alerts}\n")
+            f.write(f"Final Active Investigations: {active_investigations}\n")
+            f.write(f"Alert Compression Rate: {compression_ratio:.2f}% (lower is better)\n")
+            f.write(f"Average Alerts per Investigation: {avg_alerts_per_inv:.2f}\n")
+            f.write(f"Synthetic Density Investigations Spawned: {len([i for i in self.correlator.active_investigations.values() if i.rule.get('rule_name') == 'High-Density Anomalous Activity'])}\n")
+            f.write(f"Average Max Risk Score (Base): {avg_max_risk:.2f}\n")
+            f.write(f"Average Current Priority (Elevated): {avg_priority:.2f}\n")
+            f.write(f"-----------------------------------------\n")
+            f.write(f"Total Pipeline Execution Time: {pipeline_total_time:.4f}s\n")
+            f.write(f"Average Throughput: {avg_eps:.2f} EPS\n")
+            f.write(f"Cumulative Times:\n")
+            f.write(f"  -> Ingest & Normalize: {self.global_metrics['ingest_time']:.4f}s\n")
+            f.write(f"  -> Enrichment: {self.global_metrics['enrich_time']:.4f}s\n")
+            f.write(f"  -> Risk Scoring: {self.global_metrics['scoring_time']:.4f}s\n")
+            f.write(f"  -> DB Storage: {self.global_metrics['storage_time']:.4f}s\n")
+            f.write(f"  -> Correlation: {self.global_metrics['correlation_time']:.4f}s\n")
+            
+        print(f"[*] Ablation specific metrics for {run_name} saved to {log_path}")
+
     def __del__(self):
         if hasattr(self, 'output_file') and self.output_file and not self.output_file.closed:
             self.output_file.close()
+        if hasattr(self, 'metrics_file') and self.metrics_file and not self.metrics_file.closed:
+            self.metrics_file.close()
+
+    def _log_metric(self, message: str, print_to_terminal: bool = False):
+        if self.metrics_file and not self.metrics_file.closed:
+            self.metrics_file.write(message + "\n")
+            self.metrics_file.flush()
+        if print_to_terminal:
+            print(message)
 
     def _log(self, message: str, print_to_terminal: bool = False):
         """Helper to write to file and optionally to terminal."""
@@ -342,7 +425,11 @@ class Orchestrator:
 
     def run_pipeline(self, batch_size=20):
         self._setup_stage_logging("stage_6_correlation")
+        self._setup_metrics_logging()
         self._log("=== RUNNING PIPELINE ===", True)
+        self._log_metric("=== PIPELINE PERFORMANCE METRICS ===", True)
+        
+        pipeline_start_time = time.perf_counter()
         stream = self._get_replay_stream()
         
         batch = []
@@ -355,23 +442,78 @@ class Orchestrator:
                 
         if batch:
             self._process_batch(batch)
+            
+        pipeline_total_time = time.perf_counter() - pipeline_start_time
+        
+        # Summary Report
+        if self.global_metrics['total_alerts'] > 0:
+            avg_eps = self.global_metrics['total_alerts'] / pipeline_total_time
+            self._log_metric(f"\n=== FINAL PIPELINE SUMMARY ===", True)
+            self._log_metric(f"Total Alerts Processed: {self.global_metrics['total_alerts']}", True)
+            self._log_metric(f"Total Pipeline Execution Time: {pipeline_total_time:.4f}s", True)
+            self._log_metric(f"Average Throughput: {avg_eps:.2f} EPS", True)
+            self._log_metric(f"Cumulative Times (Across all batches):", True)
+            self._log_metric(f"  -> Ingest & Normalize: {self.global_metrics['ingest_time']:.4f}s", True)
+            self._log_metric(f"  -> Enrichment: {self.global_metrics['enrich_time']:.4f}s", True)
+            self._log_metric(f"  -> Risk Scoring: {self.global_metrics['scoring_time']:.4f}s", True)
+            self._log_metric(f"  -> DB Storage: {self.global_metrics['storage_time']:.4f}s", True)
+            self._log_metric(f"  -> Correlation: {self.global_metrics['correlation_time']:.4f}s", True)
+            self._log_metric(f"==================================", True)
+            
+        return pipeline_total_time
 
     def _process_batch(self, batch):
+        batch_start_time = time.perf_counter()
+        
         # 1. Synchronous Ingest (Fast)
+        t0 = time.perf_counter()
         normalized_alerts = [self.ingest_pipeline.process(env) for env in batch]
+        ingest_time = time.perf_counter() - t0
         
         # 2. Synchronous Enrichment
+        t0 = time.perf_counter()
         enriched_alerts = [self.enricher.enrich(alert) for alert in normalized_alerts]
+        enrich_time = time.perf_counter() - t0
         
         # 3. Synchronous Scoring & Correlation (Maintains chronological order)
+        scoring_time = 0
+        storage_time = 0
+        correlation_time = 0
+        
         for alert in enriched_alerts:
+            t0 = time.perf_counter()
             scored_output = self.risk_scorer.score(alert)
             final_output = self.classifier.process(scored_output)
+            scoring_time += time.perf_counter() - t0
             
+            t0 = time.perf_counter()
             storage_id = self.storage.save_alert(final_output)
-            final_output["_storage_id"] = storage_id
+            if isinstance(final_output, dict):
+                final_output["_storage_id"] = storage_id
+            else:
+                setattr(final_output, "_storage_id", storage_id)
+            storage_time += time.perf_counter() - t0
             
+            t0 = time.perf_counter()
             self.correlator.process_alert(final_output)
+            correlation_time += time.perf_counter() - t0
+
+        batch_total_time = time.perf_counter() - batch_start_time
+        throughput_eps = len(batch) / batch_total_time if batch_total_time > 0 else 0
+        
+        # Update Globals
+        self.global_metrics['total_alerts'] += len(batch)
+        self.global_metrics['total_time'] += batch_total_time
+        self.global_metrics['ingest_time'] += ingest_time
+        self.global_metrics['enrich_time'] += enrich_time
+        self.global_metrics['scoring_time'] += scoring_time
+        self.global_metrics['storage_time'] += storage_time
+        self.global_metrics['correlation_time'] += correlation_time
+        
+        # Log Batch Metrics
+        self._log_metric(f"[Batch Metrics] Size: {len(batch)} | Time: {batch_total_time:.4f}s | Throughput: {throughput_eps:.2f} EPS")
+        self._log_metric(f"  -> Ingest: {ingest_time:.4f}s | Enrich: {enrich_time:.4f}s | Score: {scoring_time:.4f}s")
+        self._log_metric(f"  -> Storage: {storage_time:.4f}s | Correlate: {correlation_time:.4f}s\n")
 
 if __name__ == "__main__":
     import argparse

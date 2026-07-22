@@ -8,9 +8,10 @@ class AlertEnricher:
     Phase 7: Alert Enrichment Module.
     Attaches Asset Context and Threat Intelligence to Normalized Alerts.
     """
-    def __init__(self, asset_repo: AssetRepository, local_threat_repo: Optional[ThreatIntelRepository] = None):
+    def __init__(self, asset_repo: AssetRepository, local_threat_repo: Optional[ThreatIntelRepository] = None, enable_threat_intel: bool = True):
         self.asset_repo = asset_repo
         self.local_threat_repo = local_threat_repo
+        self.enable_threat_intel = enable_threat_intel
         # NEW: The Local Memory Cache
         self._ioc_cache: Dict[str, dict] = {}
         
@@ -68,14 +69,35 @@ class AlertEnricher:
 
     def _enrich_threat_intel(self, alert: Any):
         alert.threat_intel = {"matched_indicators": [], "highest_reputation": "unknown", "max_confidence": 0}
+        
+        if not getattr(self, 'enable_threat_intel', True):
+            return
+
+        # Check if raw_alert already has threat_intel injected by the data generator
+        raw_ti = {}
+        if hasattr(alert, 'raw_alert') and isinstance(alert.raw_alert, dict):
+            raw_ti = alert.raw_alert.get('threat_intel', {})
+            
+        if raw_ti and isinstance(raw_ti, dict) and raw_ti.get('highest_reputation'):
+            alert.threat_intel = raw_ti
+            if "matched_indicators" not in alert.threat_intel:
+                alert.threat_intel["matched_indicators"] = []
+            if "max_confidence" not in alert.threat_intel:
+                alert.threat_intel["max_confidence"] = 100
+            return
 
         if not self.local_threat_repo:
             return
 
         observables = set()
-        if hasattr(alert, 'ips'): observables.update(alert.ips)
-        if hasattr(alert, 'domains'): observables.update(alert.domains)
-        if hasattr(alert, 'hashes'): observables.update(alert.hashes)
+        if hasattr(alert, 'ips') and alert.ips: observables.update(alert.ips)
+        if hasattr(alert, 'domains') and alert.domains: observables.update(alert.domains)
+        if hasattr(alert, 'hashes') and alert.hashes: observables.update(alert.hashes)
+        
+        for field in ['src_ip', 'dst_ip', 'host_ip', 'domain', 'url']:
+            val = getattr(alert, field, '')
+            if val:
+                observables.add(val)
 
         matched_intel = []
 
