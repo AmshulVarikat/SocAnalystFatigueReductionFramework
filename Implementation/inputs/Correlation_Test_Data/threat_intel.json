@@ -1,0 +1,8 @@
+{
+  "malicious_ips": [
+    "192.168.1.50"
+  ],
+  "malicious_hashes": [
+    "9E590F2F936B4982CA6E7C77A6A38DF1"
+  ]
+}

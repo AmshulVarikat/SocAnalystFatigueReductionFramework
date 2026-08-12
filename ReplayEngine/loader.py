@@ -52,11 +52,27 @@ class JsonLoader:
 
     def _load_alerts(self, alerts_path: Path) -> List[Alert]:
         with alerts_path.open("r", encoding="utf-8") as handle:
-            try:
-                payload = json.load(handle)
-            except json.JSONDecodeError:
-                handle.seek(0)
-                payload = [json.loads(line) for line in handle if line.strip()]
+            content = handle.read()
+            
+        try:
+            payload = json.loads(content)
+            if not isinstance(payload, list):
+                payload = [payload]
+        except json.JSONDecodeError:
+            payload = []
+            decoder = json.JSONDecoder()
+            idx = 0
+            length = len(content)
+            while idx < length:
+                while idx < length and content[idx].isspace():
+                    idx += 1
+                if idx == length:
+                    break
+                try:
+                    obj, idx = decoder.raw_decode(content, idx)
+                    payload.append(obj)
+                except json.JSONDecodeError:
+                    break
 
         if not isinstance(payload, list):
             raise ValueError("extracted_alerts.json must contain an array of alerts")

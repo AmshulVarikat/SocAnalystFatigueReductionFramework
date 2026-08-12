@@ -1,0 +1,58 @@
+[
+  {
+    "indicator": "198.51.100.1",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 90,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "198.51.100.2",
+    "type": "ipv4",
+    "reputation": "suspicious",
+    "confidence_score": 75,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "203.0.113.1",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 95,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "203.0.113.2",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 85,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "203.0.113.3",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 99,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "evil-high.com",
+    "type": "domain",
+    "reputation": "malicious",
+    "confidence_score": 100,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "10.10.10.11",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 100,
+    "source": "MockIntel"
+  },
+  {
+    "indicator": "10.10.10.15",
+    "type": "ipv4",
+    "reputation": "malicious",
+    "confidence_score": 100,
+    "source": "MockIntel"
+  }
+]

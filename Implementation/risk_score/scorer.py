@@ -7,11 +7,13 @@ class FrequencyTracker:
     A lightweight, in-memory state tracker to calculate alert frequency.
     Maintains a sliding time window to identify noisy, spamming alerts.
     """
+    # Class-level dictionary to store timestamps globally across all instances.
+    # Format: {"rule_id_source_ip": [datetime_obj1, datetime_obj2, ...]}
+    _global_history = {}
+
     def __init__(self, time_window_minutes=60):
         self.time_window = timedelta(minutes=time_window_minutes)
-        # Dictionary to store timestamps. 
-        # Format: {"rule_id_source_ip": [datetime_obj1, datetime_obj2, ...]}
-        self._history = {}
+        self._history = self.__class__._global_history
 
     def get_frequency(self, alert: Any) -> int:
         """
